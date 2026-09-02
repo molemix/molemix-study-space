@@ -61,15 +61,15 @@
         </div>
 
         <div class="summary-grid">
-          <article class="summary-card">
-            <span>Получено</span>
+          <article class="summary-card earned-card">
+            <span>Заработано</span>
             <strong id="paidTotal">0 ₽</strong>
-            <small>оплаченные занятия месяца</small>
+            <small>проведённые занятия месяца</small>
           </article>
-          <article class="summary-card">
-            <span>Ожидает оплаты</span>
+          <article class="summary-card future-card">
+            <span>Будущие деньги</span>
             <strong id="unpaidTotal">0 ₽</strong>
-            <small>проведено, но ещё не оплачено</small>
+            <small>запланировано до конца месяца</small>
           </article>
           <article class="summary-card">
             <span>Проведено</span>
@@ -178,6 +178,7 @@
 
         <div class="modal-actions full">
           <button type="button" class="danger-btn hidden" id="deleteLessonBtn">Удалить</button>
+          <button type="button" class="soft-btn hidden" id="duplicateLessonBtn">Дублировать</button>
           <div class="spacer"></div>
           <button type="button" class="ghost-btn" data-close="lesson">Отмена</button>
           <button type="submit" class="primary-btn">Сохранить</button>
@@ -209,17 +210,11 @@
           <span>Стоимость занятия, ₽</span>
           <input id="studentPrice" type="number" min="0" step="50" required placeholder="2000" />
         </label>
-        <label>
+        <div class="color-field">
           <span>Цвет ученика</span>
-          <select id="studentColor">
-            <option value="#cdb7f6">Сиреневый</option>
-            <option value="#f6bfd5">Розовый</option>
-            <option value="#b9d9ef">Голубой</option>
-            <option value="#c7e3d0">Зелёный</option>
-            <option value="#f2d9a6">Песочный</option>
-            <option value="#d9c6ba">Какао</option>
-          </select>
-        </label>
+          <input type="hidden" id="studentColor" value="#cdb7f6" />
+          <div id="studentColorPalette" class="color-palette" aria-label="Выбор цвета ученика"></div>
+        </div>
         <label class="full">
           <span>Цель</span>
           <textarea id="studentGoal" rows="2" placeholder="Например: подготовка к ОГЭ, выйти на 4–5"></textarea>

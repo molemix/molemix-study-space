@@ -45,6 +45,37 @@ const views = {
   studentDetail: $('studentDetailView')
 };
 
+const STUDENT_COLORS = [
+  '#cdb7f6','#bca7ee','#a894df','#967fce','#d7c7f8',
+  '#f6bfd5','#f2aeca','#ed9bbb','#e8c6d6','#f8d8e5',
+  '#b9d9ef','#a8cee9','#94c0df','#c5e4f3','#acd8df',
+  '#c7e3d0','#b4d9c1','#9fcdae','#d6ead8','#b9dfd7',
+  '#f2d9a6','#efd09a','#f5e1b9','#edc9a8','#f3d2bd',
+  '#d9c6ba','#cdb7aa','#e1d2c8','#c9b8c8','#d9c6df'
+];
+function renderStudentColorPalette(selected){
+  const palette=$('studentColorPalette');
+  if(!palette) return;
+  const current=selected || $('studentColor').value || STUDENT_COLORS[0];
+  $('studentColor').value=current;
+  const colors=STUDENT_COLORS.includes(current)?STUDENT_COLORS:[current,...STUDENT_COLORS];
+  palette.innerHTML='';
+  colors.forEach(color=>{
+    const btn=document.createElement('button');
+    btn.type='button';
+    btn.className='color-swatch'+(color.toLowerCase()===current.toLowerCase()?' selected':'');
+    btn.style.setProperty('--swatch',color);
+    btn.setAttribute('aria-label',`Выбрать цвет ${color}`);
+    btn.title='Выбрать цвет';
+    btn.addEventListener('click',()=>{
+      $('studentColor').value=color;
+      palette.querySelectorAll('.color-swatch').forEach(x=>x.classList.remove('selected'));
+      btn.classList.add('selected');
+    });
+    palette.appendChild(btn);
+  });
+}
+
 function uid(prefix='id'){
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
 }
@@ -179,11 +210,12 @@ function renderCalendar(){
 
   const key = monthKey(currentDate);
   const monthLessons = state.lessons.filter(l=>l.date?.startsWith(key));
-  const paid = monthLessons.filter(l=>l.paid && !l.cancelled).reduce((s,l)=>s+Number(l.price||0),0);
-  const unpaid = monthLessons.filter(l=>l.conducted && !l.paid && !l.cancelled).reduce((s,l)=>s+Number(l.price||0),0);
+  const todayIso = toISODate(new Date());
+  const earned = monthLessons.filter(l=>l.conducted && !l.cancelled).reduce((s,l)=>s+Number(l.price||0),0);
+  const future = monthLessons.filter(l=>!l.conducted && !l.cancelled && l.date >= todayIso).reduce((s,l)=>s+Number(l.price||0),0);
   const conducted = monthLessons.filter(l=>l.conducted && !l.cancelled).length;
-  $('paidTotal').textContent = money(paid);
-  $('unpaidTotal').textContent = money(unpaid);
+  $('paidTotal').textContent = money(earned);
+  $('unpaidTotal').textContent = money(future);
   $('conductedCount').textContent = conducted;
 
   const grid = $('calendarGrid');
@@ -325,7 +357,7 @@ function openStudentModal(id=null){
   $('studentName').value=s?.name||'';
   $('studentClass').value=s?.className||'';
   $('studentPrice').value=s?.price||'';
-  $('studentColor').value=s?.color||'#cdb7f6';
+  renderStudentColorPalette(s?.color||'#cdb7f6');
   $('studentGoal').value=s?.goal||'';
   $('studentLevel').value=s?.level||'';
   $('studentContacts').value=s?.contacts||'';
@@ -404,6 +436,7 @@ function openLessonModal(id=null,date=null,studentId=null){
   $('topicsEditor').innerHTML='';
   (l?.topics?.length?l.topics:[{name:'',progress:''}]).forEach(addTopicRow);
   $('deleteLessonBtn').classList.toggle('hidden',!l);
+  $('duplicateLessonBtn').classList.toggle('hidden',!l);
   $('lessonModalBackdrop').hidden=false;
 }
 $('lessonForm').addEventListener('submit',async(e)=>{
@@ -434,6 +467,26 @@ $('lessonForm').addEventListener('submit',async(e)=>{
     toast('Занятие сохранено в облаке');
   }catch(error){console.error(error);toast('Не удалось сохранить занятие');}
 });
+$('duplicateLessonBtn').addEventListener('click',()=>{
+  const sourceDate=$('lessonDate').value || toISODate(new Date());
+  const next=new Date(sourceDate+'T12:00:00');
+  next.setDate(next.getDate()+7);
+  $('lessonId').value='';
+  $('lessonModalTitle').textContent='Дубликат занятия';
+  $('lessonDate').value=toISODate(next);
+  $('lessonHomework').value='none';
+  $('lessonComment').value='';
+  $('lessonConducted').checked=false;
+  $('lessonPaid').checked=false;
+  $('lessonCancelled').checked=false;
+  $('topicsEditor').innerHTML='';
+  addTopicRow();
+  $('deleteLessonBtn').classList.add('hidden');
+  $('duplicateLessonBtn').classList.add('hidden');
+  $('lessonDate').focus();
+  toast('Создан дубликат на следующую неделю — дату можно изменить');
+});
+
 $('deleteLessonBtn').addEventListener('click',async()=>{
   const id=$('lessonId').value; if(!id)return;
   if(confirm('Удалить занятие? Для отменённых занятий лучше использовать статус «Отменено» — так история сохранится.')){
