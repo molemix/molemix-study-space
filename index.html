@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#fbf8f5" />
+  <title>MoleMix Учебное пространство</title>
+  <link rel="icon" href="assets/logo.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <section id="authGate" class="auth-gate">
+    <div class="auth-card">
+      <img src="assets/logo.png" alt="MoleMix" class="auth-logo" />
+      <div class="eyebrow">Личное пространство преподавателя</div>
+      <h1>MoleMix <span>Учебное пространство</span></h1>
+      <p class="auth-quote">Маленькие шаги + Регулярность = Большой результат</p>
+      <button id="loginBtn" class="google-login-btn" type="button">
+        <span class="google-mark">G</span> Войти через Google
+      </button>
+      <p id="authMessage" class="auth-message">Войди в свой Google-аккаунт, чтобы загрузить учеников и занятия.</p>
+    </div>
+  </section>
+
+  <div class="app-shell" id="appShell" hidden>
+    <header class="topbar">
+      <div class="brand-block">
+        <img src="assets/logo.png" alt="MoleMix" class="brand-logo" />
+        <div>
+          <h1>MoleMix <span>Учебное пространство</span></h1>
+          <p>Маленькие шаги + Регулярность = Большой результат</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="ghost-btn" id="exportBtn" title="Скачать резервную копию">Экспорт</button>
+        <div class="account-chip">
+          <img id="userAvatar" alt="" class="user-avatar" hidden />
+          <span id="userEmail" class="user-email"></span>
+          <button class="ghost-btn compact-btn" id="logoutBtn" type="button">Выйти</button>
+        </div>
+      </div>
+    </header>
+
+    <nav class="main-nav" aria-label="Основная навигация">
+      <button class="nav-btn active" data-view="calendar">Календарь</button>
+      <button class="nav-btn" data-view="students">Ученики</button>
+    </nav>
+
+    <main>
+      <section id="calendarView" class="view active-view">
+        <div class="calendar-toolbar">
+          <div>
+            <div class="eyebrow">Планер занятий</div>
+            <h2 id="monthTitle">Сентябрь 2026</h2>
+          </div>
+          <div class="month-controls">
+            <button class="icon-btn" id="prevMonth" aria-label="Предыдущий месяц">←</button>
+            <button class="soft-btn" id="todayBtn">Сегодня</button>
+            <button class="icon-btn" id="nextMonth" aria-label="Следующий месяц">→</button>
+          </div>
+        </div>
+
+        <div class="summary-grid">
+          <article class="summary-card">
+            <span>Получено</span>
+            <strong id="paidTotal">0 ₽</strong>
+            <small>оплаченные занятия месяца</small>
+          </article>
+          <article class="summary-card">
+            <span>Ожидает оплаты</span>
+            <strong id="unpaidTotal">0 ₽</strong>
+            <small>проведено, но ещё не оплачено</small>
+          </article>
+          <article class="summary-card">
+            <span>Проведено</span>
+            <strong id="conductedCount">0</strong>
+            <small>занятий за месяц</small>
+          </article>
+        </div>
+
+        <div class="calendar-wrap">
+          <div class="weekdays" aria-hidden="true">
+            <div>Пн</div><div>Вт</div><div>Ср</div><div>Чт</div><div>Пт</div><div>Сб</div><div>Вс</div>
+          </div>
+          <div id="calendarGrid" class="calendar-grid"></div>
+        </div>
+      </section>
+
+      <section id="studentsView" class="view">
+        <div class="section-heading">
+          <div>
+            <div class="eyebrow">Личные страницы</div>
+            <h2>Ученики</h2>
+            <p>Профиль, учебная история, темы, прогресс, ДЗ и оплаты.</p>
+          </div>
+          <button class="primary-btn" id="addStudentBtn">+ Добавить ученика</button>
+        </div>
+        <div id="studentsGrid" class="students-grid"></div>
+      </section>
+
+      <section id="studentDetailView" class="view">
+        <button class="back-btn" id="backToStudents">← Все ученики</button>
+        <div id="studentDetail"></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="lessonModalBackdrop" hidden>
+    <div class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="lessonModalTitle">
+      <div class="modal-head">
+        <div>
+          <div class="eyebrow">Занятие</div>
+          <h3 id="lessonModalTitle">Новое занятие</h3>
+        </div>
+        <button class="close-btn" data-close="lesson">×</button>
+      </div>
+      <form id="lessonForm" class="form-grid">
+        <input type="hidden" id="lessonId" />
+        <label>
+          <span>Ученик</span>
+          <select id="lessonStudent" required></select>
+        </label>
+        <label>
+          <span>Дата</span>
+          <input id="lessonDate" type="date" required />
+        </label>
+        <label>
+          <span>Время</span>
+          <input id="lessonTime" type="time" required />
+        </label>
+        <label>
+          <span>Стоимость, ₽</span>
+          <input id="lessonPrice" type="number" min="0" step="50" required />
+        </label>
+
+        <div class="form-section full">
+          <div class="form-section-title">
+            <div>
+              <strong>Темы занятия</strong>
+              <small>Можно добавить несколько тем и оценить каждую по шкале 1–10.</small>
+            </div>
+            <button type="button" class="soft-btn" id="addTopicBtn">+ Тема</button>
+          </div>
+          <div id="topicsEditor" class="topics-editor"></div>
+        </div>
+
+        <label class="full">
+          <span>Домашнее задание</span>
+          <select id="lessonHomework">
+            <option value="none">Не задано</option>
+            <option value="todo">Нужно отправить</option>
+            <option value="sent">Отправлено</option>
+          </select>
+        </label>
+
+        <label class="full">
+          <span>Комментарий</span>
+          <textarea id="lessonComment" rows="3" placeholder="Например: повторить амфотерные оксиды"></textarea>
+        </label>
+
+        <div class="status-row full">
+          <label class="toggle-card">
+            <input type="checkbox" id="lessonConducted" />
+            <span class="toggle-dot"></span>
+            <span><strong>Проведено</strong><small>занятие состоялось</small></span>
+          </label>
+          <label class="toggle-card">
+            <input type="checkbox" id="lessonPaid" />
+            <span class="toggle-dot"></span>
+            <span><strong>Оплачено</strong><small>оплата получена</small></span>
+          </label>
+          <label class="toggle-card danger-toggle">
+            <input type="checkbox" id="lessonCancelled" />
+            <span class="toggle-dot"></span>
+            <span><strong>Отменено</strong><small>не считать как проведённое</small></span>
+          </label>
+        </div>
+
+        <div class="modal-actions full">
+          <button type="button" class="danger-btn hidden" id="deleteLessonBtn">Удалить</button>
+          <div class="spacer"></div>
+          <button type="button" class="ghost-btn" data-close="lesson">Отмена</button>
+          <button type="submit" class="primary-btn">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="studentModalBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="studentModalTitle">
+      <div class="modal-head">
+        <div>
+          <div class="eyebrow">Ученик</div>
+          <h3 id="studentModalTitle">Новый ученик</h3>
+        </div>
+        <button class="close-btn" data-close="student">×</button>
+      </div>
+      <form id="studentForm" class="form-grid">
+        <input type="hidden" id="studentId" />
+        <label>
+          <span>Имя</span>
+          <input id="studentName" type="text" required placeholder="Катя" />
+        </label>
+        <label>
+          <span>Класс</span>
+          <input id="studentClass" type="text" placeholder="9 класс" />
+        </label>
+        <label>
+          <span>Стоимость занятия, ₽</span>
+          <input id="studentPrice" type="number" min="0" step="50" required placeholder="2000" />
+        </label>
+        <label>
+          <span>Цвет ученика</span>
+          <select id="studentColor">
+            <option value="#cdb7f6">Сиреневый</option>
+            <option value="#f6bfd5">Розовый</option>
+            <option value="#b9d9ef">Голубой</option>
+            <option value="#c7e3d0">Зелёный</option>
+            <option value="#f2d9a6">Песочный</option>
+            <option value="#d9c6ba">Какао</option>
+          </select>
+        </label>
+        <label class="full">
+          <span>Цель</span>
+          <textarea id="studentGoal" rows="2" placeholder="Например: подготовка к ОГЭ, выйти на 4–5"></textarea>
+        </label>
+        <label class="full">
+          <span>Нынешний уровень</span>
+          <textarea id="studentLevel" rows="2" placeholder="Что уже умеет, где есть пробелы"></textarea>
+        </label>
+        <label class="full">
+          <span>Контакты</span>
+          <textarea id="studentContacts" rows="2" placeholder="Телефон, Telegram, контакт родителя"></textarea>
+        </label>
+        <label class="full">
+          <span>Ссылка на урок</span>
+          <input id="studentLessonLink" type="url" inputmode="url" placeholder="https://..." />
+        </label>
+        <label class="full">
+          <span>Общая заметка</span>
+          <textarea id="studentNote" rows="2" placeholder="Любая важная информация для себя"></textarea>
+        </label>
+        <div class="modal-actions full">
+          <button type="button" class="danger-btn hidden" id="archiveStudentBtn">Архивировать</button>
+          <div class="spacer"></div>
+          <button type="button" class="ghost-btn" data-close="student">Отмена</button>
+          <button type="submit" class="primary-btn">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" aria-live="polite"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
