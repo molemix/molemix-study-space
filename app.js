@@ -30,19 +30,21 @@ const db = getFirestore(firebaseApp);
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-const state = { students: [], lessons: [] };
+const state = { students: [], lessons: [], materials: [] };
 let currentDate = new Date();
 currentDate.setDate(1);
 let activeStudentId = null;
 let currentUser = null;
 let stopStudents = null;
 let stopLessons = null;
+let stopMaterials = null;
 
 const $ = (id) => document.getElementById(id);
 const views = {
   calendar: $('calendarView'),
   students: $('studentsView'),
-  studentDetail: $('studentDetailView')
+  studentDetail: $('studentDetailView'),
+  materials: $('materialsView')
 };
 
 const STUDENT_COLORS = [
@@ -122,9 +124,14 @@ async function persistLesson(lesson){
   const {id,...data}=lesson;
   await setDoc(userDoc('lessons',id), {...data, updatedAt:new Date().toISOString()});
 }
+async function persistMaterial(material){
+  const {id,...data}=material;
+  await setDoc(userDoc('materials',id), {...data, updatedAt:new Date().toISOString()});
+}
 function renderAll(){
   renderCalendar();
   renderStudents();
+  renderMaterials();
   if(activeStudentId && getStudent(activeStudentId)) renderStudentDetail();
 }
 
@@ -139,10 +146,15 @@ function startCloudSync(user){
     state.lessons = snapshot.docs.map(d=>({id:d.id,...d.data()}));
     renderAll();
   }, handleFirestoreError);
+  stopMaterials = onSnapshot(userCollection('materials'), snapshot=>{
+    state.materials = snapshot.docs.map(d=>({id:d.id,...d.data()}));
+    renderAll();
+  }, handleFirestoreError);
 }
 function stopCloudSync(){
   if(stopStudents){stopStudents();stopStudents=null;}
   if(stopLessons){stopLessons();stopLessons=null;}
+  if(stopMaterials){stopMaterials();stopMaterials=null;}
 }
 function handleFirestoreError(error){
   console.error(error);
@@ -182,7 +194,7 @@ onAuthStateChanged(auth,user=>{
     startCloudSync(user);
   }else{
     stopCloudSync();
-    state.students=[]; state.lessons=[]; activeStudentId=null;
+    state.students=[]; state.lessons=[]; state.materials=[]; activeStudentId=null;
     $('appShell').hidden=true;
     $('authGate').hidden=false;
     $('authMessage').textContent='Войди в свой Google-аккаунт, чтобы загрузить учеников и занятия.';
@@ -195,6 +207,7 @@ function switchView(name){
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active', b.dataset.view===name));
   if(name==='calendar') renderCalendar();
   if(name==='students') renderStudents();
+  if(name==='materials') renderMaterials();
 }
 
 document.querySelectorAll('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>switchView(btn.dataset.view)));
@@ -332,22 +345,158 @@ function renderJournalTable(lessons){
   const rows=lessons.map(l=>{
     const topics=(l.topics||[]).length ? l.topics.map(t=>`<span class="topic-pill">${escapeHtml(t.name||'Без темы')} <span class="progress-badge">${t.progress?`${t.progress}/10`:'—'}</span></span>`).join('') : '<span class="muted-empty">—</span>';
     const hw=homeworkBadge(l.homework);
+    const notes=notesBadge(l.notes);
     const pay=l.cancelled?'<span class="status-badge bad">Отменено</span>':(l.paid?'<span class="status-badge good">✓ '+money(l.price)+'</span>':'<span class="status-badge wait">○ '+money(l.price)+'</span>');
     return `<tr data-open-lesson="${l.id}" style="cursor:pointer">
       <td data-label="Дата">${formatDateRu(l.date,false)}<br><small>${escapeHtml(l.time||'')}</small></td>
       <td data-label="Тема">${topics}</td>
       <td data-label="ДЗ">${hw}</td>
+      <td data-label="Конспект">${notes}</td>
       <td data-label="Оплата">${pay}</td>
       <td data-label="Комментарий">${escapeHtml(l.comment||'—')}</td>
     </tr>`;
   }).join('');
-  return `<table class="journal-table"><thead><tr><th>Дата</th><th>Тема / прогресс</th><th>ДЗ</th><th>Оплата</th><th>Комментарий</th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<table class="journal-table"><thead><tr><th>Дата</th><th>Тема / прогресс</th><th>ДЗ</th><th>Конспект</th><th>Оплата</th><th>Комментарий</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 function homeworkBadge(v){
   if(v==='sent') return '<span class="status-badge good">✓ Отправлено</span>';
   if(v==='todo') return '<span class="status-badge wait">⏳ Нужно отправить</span>';
   return '<span class="status-badge none">— Не задано</span>';
 }
+function notesBadge(v){
+  if(v==='sent') return '<span class="status-badge good">✓ Отправлен</span>';
+  if(v==='todo') return '<span class="status-badge wait">⏳ Нужно отправить</span>';
+  return '<span class="status-badge none">— Не нужен</span>';
+}
+
+
+function materialLevelMeta(level){
+  if(level==='beginner') return {label:'Начальный', className:'beginner'};
+  if(level==='advanced') return {label:'Сложный', className:'advanced'};
+  return {label:'Средний', className:'medium'};
+}
+function normalizeSearch(value=''){
+  return String(value).trim().toLocaleLowerCase('ru-RU');
+}
+function populateMaterialClassFilter(){
+  const select=$('materialClassFilter');
+  if(!select) return;
+  const previous=select.value || 'all';
+  const classes=[...new Set(state.materials.map(m=>(m.className||'').trim()).filter(Boolean))]
+    .sort((a,b)=>a.localeCompare(b,'ru',{numeric:true,sensitivity:'base'}));
+  select.innerHTML='<option value="all">Все</option>' + classes.map(c=>`<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('');
+  select.value=classes.includes(previous)?previous:'all';
+}
+function renderMaterials(){
+  const grid=$('materialsGrid');
+  if(!grid) return;
+  populateMaterialClassFilter();
+  const query=normalizeSearch($('materialSearch')?.value||'');
+  const classFilter=$('materialClassFilter')?.value||'all';
+  const levelFilter=$('materialLevelFilter')?.value||'all';
+  const materials=[...state.materials]
+    .filter(m=>!query || normalizeSearch(m.name).includes(query))
+    .filter(m=>classFilter==='all' || (m.className||'')===classFilter)
+    .filter(m=>levelFilter==='all' || (m.level||'medium')===levelFilter)
+    .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ru',{numeric:true,sensitivity:'base'}));
+
+  const count=$('materialsCount');
+  if(count){
+    const total=state.materials.length;
+    count.textContent=total ? `Показано: ${materials.length} из ${total}` : '';
+  }
+  if(!state.materials.length){
+    grid.innerHTML=`<div class="empty-state materials-empty"><strong>Библиотека пока пустая</strong><br><span>Добавь первый конспект или PDF, чтобы больше не искать материалы по папкам.</span></div>`;
+    return;
+  }
+  if(!materials.length){
+    grid.innerHTML=`<div class="empty-state materials-empty"><strong>Ничего не найдено</strong><br><span>Попробуй изменить поиск или сбросить фильтры.</span></div>`;
+    return;
+  }
+  grid.innerHTML='';
+  materials.forEach(m=>{
+    const meta=materialLevelMeta(m.level);
+    const url=safeHttpUrl(m.link);
+    const card=document.createElement('article');
+    card.className='material-card';
+    card.innerHTML=`
+      <div class="material-card-top">
+        <div class="material-title-wrap">
+          <h3>${escapeHtml(m.name||'Без названия')}</h3>
+          <div class="material-tags">
+            ${m.className?`<span class="material-tag class-tag">${escapeHtml(m.className)}</span>`:''}
+            <span class="material-tag level-tag ${meta.className}">${meta.label}</span>
+          </div>
+        </div>
+        <button type="button" class="material-edit-btn" data-edit-material="${m.id}" aria-label="Редактировать материал" title="Редактировать">•••</button>
+      </div>
+      <p class="material-comment ${m.comment?'':'muted-empty'}">${escapeHtml(m.comment||'Комментарий не добавлен')}</p>
+      <div class="material-card-actions">
+        ${url?`<a class="material-open-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Открыть PDF ↗</a>`:'<span class="material-no-link">Ссылка не добавлена</span>'}
+        <button type="button" class="ghost-btn material-edit-text" data-edit-material="${m.id}">Редактировать</button>
+      </div>`;
+    card.querySelectorAll('[data-edit-material]').forEach(btn=>btn.addEventListener('click',()=>openMaterialModal(m.id)));
+    grid.appendChild(card);
+  });
+}
+
+$('materialSearch').addEventListener('input',renderMaterials);
+$('materialClassFilter').addEventListener('change',renderMaterials);
+$('materialLevelFilter').addEventListener('change',renderMaterials);
+$('clearMaterialFilters').addEventListener('click',()=>{
+  $('materialSearch').value='';
+  $('materialClassFilter').value='all';
+  $('materialLevelFilter').value='all';
+  renderMaterials();
+});
+$('addMaterialBtn').addEventListener('click',()=>openMaterialModal());
+function openMaterialModal(id=null){
+  const m=id?state.materials.find(x=>x.id===id):null;
+  $('materialModalTitle').textContent=m?'Редактировать материал':'Новый материал';
+  $('materialId').value=m?.id||'';
+  $('materialName').value=m?.name||'';
+  $('materialClass').value=m?.className||'';
+  $('materialLevel').value=m?.level||'medium';
+  $('materialLink').value=m?.link||'';
+  $('materialComment').value=m?.comment||'';
+  $('deleteMaterialBtn').classList.toggle('hidden',!m);
+  $('materialModalBackdrop').hidden=false;
+  setTimeout(()=>$('materialName').focus(),0);
+}
+$('materialForm').addEventListener('submit',async(e)=>{
+  e.preventDefault();
+  const id=$('materialId').value || uid('material');
+  const existing=state.materials.find(x=>x.id===id);
+  const link=$('materialLink').value.trim();
+  if(link && !safeHttpUrl(link)) return toast('Ссылка должна начинаться с http:// или https://');
+  const material={
+    ...(existing||{}), id,
+    name:$('materialName').value.trim(),
+    className:$('materialClass').value.trim(),
+    level:$('materialLevel').value,
+    link,
+    comment:$('materialComment').value.trim(),
+    createdAt:existing?.createdAt||new Date().toISOString()
+  };
+  if(!material.name) return toast('Напиши название материала');
+  try{
+    await persistMaterial(material);
+    closeModal('material');
+    toast(existing?'Материал обновлён':'Материал добавлен в библиотеку');
+  }catch(error){console.error(error);toast('Не удалось сохранить материал');}
+});
+$('deleteMaterialBtn').addEventListener('click',async()=>{
+  const id=$('materialId').value;
+  const m=state.materials.find(x=>x.id===id);
+  if(!id||!m) return;
+  if(confirm(`Удалить материал «${m.name}» из библиотеки? Сам PDF по ссылке удалён не будет.`)){
+    try{
+      await deleteDoc(userDoc('materials',id));
+      closeModal('material');
+      toast('Материал удалён из библиотеки');
+    }catch(error){console.error(error);toast('Не удалось удалить материал');}
+  }
+});
 
 $('addStudentBtn').addEventListener('click',()=>openStudentModal());
 function openStudentModal(id=null){
@@ -429,6 +578,7 @@ function openLessonModal(id=null,date=null,studentId=null){
   const s=getStudent(l?.studentId||studentId);
   $('lessonPrice').value=l?.price ?? s?.price ?? '';
   $('lessonHomework').value=l?.homework||'none';
+  $('lessonNotes').value=l?.notes||'none';
   $('lessonComment').value=l?.comment||'';
   $('lessonConducted').checked=!!l?.conducted;
   $('lessonPaid').checked=!!l?.paid;
@@ -453,6 +603,7 @@ $('lessonForm').addEventListener('submit',async(e)=>{
     price:Number($('lessonPrice').value||0),
     topics,
     homework:$('lessonHomework').value,
+    notes:$('lessonNotes').value,
     comment:$('lessonComment').value.trim(),
     conducted:$('lessonConducted').checked,
     paid:$('lessonPaid').checked,
@@ -475,6 +626,7 @@ $('duplicateLessonBtn').addEventListener('click',()=>{
   $('lessonModalTitle').textContent='Дубликат занятия';
   $('lessonDate').value=toISODate(next);
   $('lessonHomework').value='none';
+  $('lessonNotes').value='none';
   $('lessonComment').value='';
   $('lessonConducted').checked=false;
   $('lessonPaid').checked=false;
@@ -496,8 +648,11 @@ $('deleteLessonBtn').addEventListener('click',async()=>{
 });
 
 document.querySelectorAll('[data-close]').forEach(btn=>btn.addEventListener('click',()=>closeModal(btn.dataset.close)));
-[$('lessonModalBackdrop'),$('studentModalBackdrop')].forEach(backdrop=>backdrop.addEventListener('click',(e)=>{if(e.target===backdrop) backdrop.hidden=true;}));
-function closeModal(type){ $(type==='lesson'?'lessonModalBackdrop':'studentModalBackdrop').hidden=true; }
+[$('lessonModalBackdrop'),$('studentModalBackdrop'),$('materialModalBackdrop')].forEach(backdrop=>backdrop.addEventListener('click',(e)=>{if(e.target===backdrop) backdrop.hidden=true;}));
+function closeModal(type){
+  const ids={lesson:'lessonModalBackdrop',student:'studentModalBackdrop',material:'materialModalBackdrop'};
+  if(ids[type]) $(ids[type]).hidden=true;
+}
 
 $('exportBtn').addEventListener('click',()=>{
   const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),ownerUid:currentUser?.uid||null,...state},null,2)],{type:'application/json'});
@@ -514,3 +669,4 @@ function escapeAttr(str=''){return escapeHtml(str);}
 
 renderCalendar();
 renderStudents();
+renderMaterials();

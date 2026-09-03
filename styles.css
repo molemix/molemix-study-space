@@ -109,3 +109,43 @@ h2{margin:0;font-size:clamp(28px,3vw,42px);letter-spacing:-.04em}
 .earned-card{background:linear-gradient(145deg,rgba(255,253,250,.96),rgba(238,249,241,.92))}
 .future-card{background:linear-gradient(145deg,rgba(255,253,250,.96),rgba(246,240,252,.94))}
 @media(max-width:620px){.color-palette{grid-template-columns:repeat(6,30px);gap:9px}.modal-actions{flex-wrap:wrap}.modal-actions .spacer{display:none;flex-basis:100%}.modal-actions button{flex:1 1 auto}}
+
+/* Lesson materials status update */
+.journal-table th:nth-child(3),.journal-table th:nth-child(4),.journal-table th:nth-child(5){white-space:nowrap}
+
+/* Materials library */
+.sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
+.materials-toolbar{display:grid;grid-template-columns:minmax(280px,1fr) minmax(150px,210px) minmax(150px,210px) auto;gap:10px;align-items:end;margin:4px 0 10px;padding:14px;background:rgba(255,253,250,.82);border:1px solid var(--line);border-radius:20px}
+.materials-search input,.materials-filter select{width:100%;height:44px;border:1px solid #ded5cf;background:white;border-radius:13px;padding:10px 12px;color:var(--text);outline:none}
+.materials-search input:focus,.materials-filter select:focus{border-color:#baa3df;box-shadow:0 0 0 3px rgba(143,110,213,.10)}
+.materials-filter>span{display:block;font-size:11px;font-weight:800;color:var(--muted);margin:0 0 5px 3px;text-transform:uppercase;letter-spacing:.05em}
+.compact-filter-btn{height:44px;white-space:nowrap}
+.materials-count{min-height:20px;margin:8px 3px 12px;color:var(--muted);font-size:12px;font-weight:700}
+.materials-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px}
+.materials-empty{grid-column:1/-1}
+.material-card{min-height:210px;display:flex;flex-direction:column;border:1px solid var(--line);background:rgba(255,253,250,.91);border-radius:22px;padding:18px;box-shadow:0 8px 28px rgba(65,48,74,.05);transition:transform .16s ease,box-shadow .16s ease}
+.material-card:hover{transform:translateY(-2px);box-shadow:0 14px 34px rgba(65,48,74,.08)}
+.material-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.material-title-wrap{min-width:0}.material-title-wrap h3{margin:0 0 9px;font-size:20px;letter-spacing:-.02em;overflow-wrap:anywhere}
+.material-tags{display:flex;flex-wrap:wrap;gap:6px}
+.material-tag{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:800;line-height:1}
+.class-tag{background:#f3efed;color:#756d75}
+.level-tag.beginner{background:var(--green-soft);color:#4e8a61}
+.level-tag.medium{background:#fff2d9;color:#956f30}
+.level-tag.advanced{background:var(--purple-soft);color:#6e53a8}
+.material-edit-btn{border:0;background:#f5f0ed;color:#817985;width:36px;height:32px;border-radius:11px;font-weight:900;letter-spacing:1px;flex:0 0 auto}.material-edit-btn:hover{background:#eee7e2}
+.material-comment{margin:16px 0 20px;line-height:1.5;white-space:pre-wrap;font-size:13px;flex:1;color:#5f5963}
+.material-card-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto}
+.material-open-btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;color:#fff;background:linear-gradient(135deg,#8f6ed5,#a781dc);border-radius:12px;padding:10px 13px;font-size:12px;font-weight:850;box-shadow:0 7px 17px rgba(143,110,213,.18);transition:.15s ease}.material-open-btn:hover{transform:translateY(-1px)}
+.material-no-link{font-size:12px;color:#aaa2ac;font-weight:700}
+.material-edit-text{padding:9px 11px;font-size:12px;border-radius:12px}
+
+@media(max-width:900px){
+  .materials-toolbar{grid-template-columns:1fr 1fr}.materials-search{grid-column:1/-1}.compact-filter-btn{align-self:end}
+}
+@media(max-width:720px){
+  .main-nav{padding:4px}.nav-btn{padding:10px 9px;font-size:13px}
+  .materials-heading{gap:14px}.materials-heading .primary-btn{width:100%}
+  .materials-toolbar{grid-template-columns:1fr;padding:10px}.materials-search{grid-column:auto}.compact-filter-btn{width:100%}
+  .materials-grid{grid-template-columns:1fr}.material-card{min-height:0}.material-card-actions{align-items:stretch;flex-direction:column}.material-open-btn,.material-edit-text{width:100%}
+}

@@ -44,6 +44,7 @@
     <nav class="main-nav" aria-label="Основная навигация">
       <button class="nav-btn active" data-view="calendar">Календарь</button>
       <button class="nav-btn" data-view="students">Ученики</button>
+      <button class="nav-btn" data-view="materials">Материалы</button>
     </nav>
 
     <main>
@@ -102,6 +103,43 @@
         <button class="back-btn" id="backToStudents">← Все ученики</button>
         <div id="studentDetail"></div>
       </section>
+
+      <section id="materialsView" class="view">
+        <div class="section-heading materials-heading">
+          <div>
+            <div class="eyebrow">Личная библиотека</div>
+            <h2>Материалы</h2>
+            <p>Конспекты и PDF в одном месте — с поиском по названию, классу и уровню.</p>
+          </div>
+          <button class="primary-btn" id="addMaterialBtn">+ Добавить материал</button>
+        </div>
+
+        <div class="materials-toolbar">
+          <label class="materials-search">
+            <span class="sr-only">Поиск материалов</span>
+            <input id="materialSearch" type="search" placeholder="Поиск по названию…" autocomplete="off" />
+          </label>
+          <label class="materials-filter">
+            <span>Класс</span>
+            <select id="materialClassFilter">
+              <option value="all">Все</option>
+            </select>
+          </label>
+          <label class="materials-filter">
+            <span>Уровень</span>
+            <select id="materialLevelFilter">
+              <option value="all">Все</option>
+              <option value="beginner">Начальный</option>
+              <option value="medium">Средний</option>
+              <option value="advanced">Сложный</option>
+            </select>
+          </label>
+          <button class="ghost-btn compact-filter-btn" id="clearMaterialFilters" type="button">Сбросить</button>
+        </div>
+
+        <div class="materials-count" id="materialsCount"></div>
+        <div id="materialsGrid" class="materials-grid"></div>
+      </section>
     </main>
   </div>
 
@@ -144,12 +182,21 @@
           <div id="topicsEditor" class="topics-editor"></div>
         </div>
 
-        <label class="full">
+        <label>
           <span>Домашнее задание</span>
           <select id="lessonHomework">
             <option value="none">Не задано</option>
             <option value="todo">Нужно отправить</option>
             <option value="sent">Отправлено</option>
+          </select>
+        </label>
+
+        <label>
+          <span>Конспект / материалы урока</span>
+          <select id="lessonNotes">
+            <option value="none">Не нужен</option>
+            <option value="todo">Нужно отправить</option>
+            <option value="sent">Отправлен</option>
           </select>
         </label>
 
@@ -239,6 +286,51 @@
           <button type="button" class="danger-btn hidden" id="archiveStudentBtn">Архивировать</button>
           <div class="spacer"></div>
           <button type="button" class="ghost-btn" data-close="student">Отмена</button>
+          <button type="submit" class="primary-btn">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="materialModalBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="materialModalTitle">
+      <div class="modal-head">
+        <div>
+          <div class="eyebrow">Материал</div>
+          <h3 id="materialModalTitle">Новый материал</h3>
+        </div>
+        <button class="close-btn" data-close="material">×</button>
+      </div>
+      <form id="materialForm" class="form-grid">
+        <input type="hidden" id="materialId" />
+        <label class="full">
+          <span>Название</span>
+          <input id="materialName" type="text" required placeholder="Например: Степень окисления" />
+        </label>
+        <label>
+          <span>Класс</span>
+          <input id="materialClass" type="text" placeholder="Например: 9 класс" />
+        </label>
+        <label>
+          <span>Уровень</span>
+          <select id="materialLevel" required>
+            <option value="beginner">Начальный</option>
+            <option value="medium" selected>Средний</option>
+            <option value="advanced">Сложный</option>
+          </select>
+        </label>
+        <label class="full">
+          <span>Ссылка на PDF / материал</span>
+          <input id="materialLink" type="url" inputmode="url" placeholder="https://drive.google.com/..." />
+        </label>
+        <label class="full">
+          <span>Комментарий</span>
+          <textarea id="materialComment" rows="3" placeholder="Например: полная теория + задания"></textarea>
+        </label>
+        <div class="modal-actions full">
+          <button type="button" class="danger-btn hidden" id="deleteMaterialBtn">Удалить</button>
+          <div class="spacer"></div>
+          <button type="button" class="ghost-btn" data-close="material">Отмена</button>
           <button type="submit" class="primary-btn">Сохранить</button>
         </div>
       </form>
