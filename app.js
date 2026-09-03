@@ -1,3 +1,4 @@
+// MoleMix build 2026-09-03.2 — materials navigation + cache refresh
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import {
   getAuth,
