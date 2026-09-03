@@ -1,4 +1,4 @@
-// MoleMix build 2026-09-03.2 — materials navigation + cache refresh
+// MoleMix build 2026-09-03.3 — trainers library
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import {
   getAuth,
@@ -31,7 +31,7 @@ const db = getFirestore(firebaseApp);
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-const state = { students: [], lessons: [], materials: [] };
+const state = { students: [], lessons: [], materials: [], trainers: [] };
 let currentDate = new Date();
 currentDate.setDate(1);
 let activeStudentId = null;
@@ -39,13 +39,15 @@ let currentUser = null;
 let stopStudents = null;
 let stopLessons = null;
 let stopMaterials = null;
+let stopTrainers = null;
 
 const $ = (id) => document.getElementById(id);
 const views = {
   calendar: $('calendarView'),
   students: $('studentsView'),
   studentDetail: $('studentDetailView'),
-  materials: $('materialsView')
+  materials: $('materialsView'),
+  trainers: $('trainersView')
 };
 
 const STUDENT_COLORS = [
@@ -129,10 +131,15 @@ async function persistMaterial(material){
   const {id,...data}=material;
   await setDoc(userDoc('materials',id), {...data, updatedAt:new Date().toISOString()});
 }
+async function persistTrainer(trainer){
+  const {id,...data}=trainer;
+  await setDoc(userDoc('trainers',id), {...data, updatedAt:new Date().toISOString()});
+}
 function renderAll(){
   renderCalendar();
   renderStudents();
   renderMaterials();
+  renderTrainers();
   if(activeStudentId && getStudent(activeStudentId)) renderStudentDetail();
 }
 
@@ -151,11 +158,16 @@ function startCloudSync(user){
     state.materials = snapshot.docs.map(d=>({id:d.id,...d.data()}));
     renderAll();
   }, handleFirestoreError);
+  stopTrainers = onSnapshot(userCollection('trainers'), snapshot=>{
+    state.trainers = snapshot.docs.map(d=>({id:d.id,...d.data()}));
+    renderAll();
+  }, handleFirestoreError);
 }
 function stopCloudSync(){
   if(stopStudents){stopStudents();stopStudents=null;}
   if(stopLessons){stopLessons();stopLessons=null;}
   if(stopMaterials){stopMaterials();stopMaterials=null;}
+  if(stopTrainers){stopTrainers();stopTrainers=null;}
 }
 function handleFirestoreError(error){
   console.error(error);
@@ -195,7 +207,7 @@ onAuthStateChanged(auth,user=>{
     startCloudSync(user);
   }else{
     stopCloudSync();
-    state.students=[]; state.lessons=[]; state.materials=[]; activeStudentId=null;
+    state.students=[]; state.lessons=[]; state.materials=[]; state.trainers=[]; activeStudentId=null;
     $('appShell').hidden=true;
     $('authGate').hidden=false;
     $('authMessage').textContent='Войди в свой Google-аккаунт, чтобы загрузить учеников и занятия.';
@@ -215,6 +227,7 @@ function switchView(name){
   if(name==='calendar') renderCalendar();
   if(name==='students') renderStudents();
   if(name==='materials') renderMaterials();
+  if(name==='trainers') renderTrainers();
 }
 
 document.querySelectorAll('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>switchView(btn.dataset.view)));
@@ -505,6 +518,117 @@ $('deleteMaterialBtn').addEventListener('click',async()=>{
   }
 });
 
+
+function populateTrainerClassFilter(){
+  const select=$('trainerClassFilter');
+  if(!select) return;
+  const previous=select.value || 'all';
+  const classes=[...new Set(state.trainers.map(t=>(t.className||'').trim()).filter(Boolean))]
+    .sort((a,b)=>a.localeCompare(b,'ru',{numeric:true,sensitivity:'base'}));
+  select.innerHTML='<option value="all">Все</option>' + classes.map(c=>`<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('');
+  select.value=classes.includes(previous)?previous:'all';
+}
+function renderTrainers(){
+  const grid=$('trainersGrid');
+  if(!grid) return;
+  populateTrainerClassFilter();
+  const query=normalizeSearch($('trainerSearch')?.value||'');
+  const classFilter=$('trainerClassFilter')?.value||'all';
+  const trainers=[...state.trainers]
+    .filter(t=>!query || normalizeSearch(t.name).includes(query))
+    .filter(t=>classFilter==='all' || (t.className||'')===classFilter)
+    .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ru',{numeric:true,sensitivity:'base'}));
+
+  const count=$('trainersCount');
+  if(count){
+    const total=state.trainers.length;
+    count.textContent=total ? `Показано: ${trainers.length} из ${total}` : '';
+  }
+  if(!state.trainers.length){
+    grid.innerHTML=`<div class="empty-state trainers-empty"><strong>Тренажёров пока нет</strong><br><span>Добавь первый тренажёр — его ссылка всегда будет под рукой.</span></div>`;
+    return;
+  }
+  if(!trainers.length){
+    grid.innerHTML=`<div class="empty-state trainers-empty"><strong>Ничего не найдено</strong><br><span>Попробуй изменить поиск или сбросить фильтр.</span></div>`;
+    return;
+  }
+  grid.innerHTML='';
+  trainers.forEach(t=>{
+    const url=safeHttpUrl(t.link);
+    const card=document.createElement('article');
+    card.className='trainer-card';
+    card.innerHTML=`
+      <div class="trainer-card-top">
+        <div class="trainer-title-wrap">
+          <h3>${escapeHtml(t.name||'Без названия')}</h3>
+          <div class="trainer-tags">
+            ${t.className?`<span class="trainer-tag class-tag">${escapeHtml(t.className)}</span>`:''}
+          </div>
+        </div>
+        <button type="button" class="trainer-edit-btn" data-edit-trainer="${t.id}" aria-label="Редактировать тренажёр" title="Редактировать">•••</button>
+      </div>
+      <div class="trainer-card-actions">
+        ${url?`<a class="trainer-open-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Открыть тренажёр ↗</a>`:'<span class="trainer-no-link">Ссылка не добавлена</span>'}
+        <button type="button" class="ghost-btn trainer-edit-text" data-edit-trainer="${t.id}">Редактировать</button>
+      </div>`;
+    card.querySelectorAll('[data-edit-trainer]').forEach(btn=>btn.addEventListener('click',()=>openTrainerModal(t.id)));
+    grid.appendChild(card);
+  });
+}
+
+$('trainerSearch').addEventListener('input',renderTrainers);
+$('trainerClassFilter').addEventListener('change',renderTrainers);
+$('clearTrainerFilters').addEventListener('click',()=>{
+  $('trainerSearch').value='';
+  $('trainerClassFilter').value='all';
+  renderTrainers();
+});
+$('addTrainerBtn').addEventListener('click',()=>openTrainerModal());
+function openTrainerModal(id=null){
+  const t=id?state.trainers.find(x=>x.id===id):null;
+  $('trainerModalTitle').textContent=t?'Редактировать тренажёр':'Новый тренажёр';
+  $('trainerId').value=t?.id||'';
+  $('trainerName').value=t?.name||'';
+  $('trainerClass').value=t?.className||'';
+  $('trainerLink').value=t?.link||'';
+  $('deleteTrainerBtn').classList.toggle('hidden',!t);
+  $('trainerModalBackdrop').hidden=false;
+  setTimeout(()=>$('trainerName').focus(),0);
+}
+$('trainerForm').addEventListener('submit',async(e)=>{
+  e.preventDefault();
+  const id=$('trainerId').value || uid('trainer');
+  const existing=state.trainers.find(x=>x.id===id);
+  const link=$('trainerLink').value.trim();
+  if(!safeHttpUrl(link)) return toast('Вставь корректную ссылку http:// или https://');
+  const trainer={
+    ...(existing||{}), id,
+    name:$('trainerName').value.trim(),
+    className:$('trainerClass').value.trim(),
+    link,
+    createdAt:existing?.createdAt||new Date().toISOString()
+  };
+  if(!trainer.name) return toast('Напиши название тренажёра');
+  if(!trainer.className) return toast('Укажи класс');
+  try{
+    await persistTrainer(trainer);
+    closeModal('trainer');
+    toast(existing?'Тренажёр обновлён':'Тренажёр добавлен');
+  }catch(error){console.error(error);toast('Не удалось сохранить тренажёр');}
+});
+$('deleteTrainerBtn').addEventListener('click',async()=>{
+  const id=$('trainerId').value;
+  const t=state.trainers.find(x=>x.id===id);
+  if(!id||!t) return;
+  if(confirm(`Удалить тренажёр «${t.name}» из списка? Сам сайт удалён не будет.`)){
+    try{
+      await deleteDoc(userDoc('trainers',id));
+      closeModal('trainer');
+      toast('Тренажёр удалён из списка');
+    }catch(error){console.error(error);toast('Не удалось удалить тренажёр');}
+  }
+});
+
 $('addStudentBtn').addEventListener('click',()=>openStudentModal());
 function openStudentModal(id=null){
   const s=id?getStudent(id):null;
@@ -655,9 +779,9 @@ $('deleteLessonBtn').addEventListener('click',async()=>{
 });
 
 document.querySelectorAll('[data-close]').forEach(btn=>btn.addEventListener('click',()=>closeModal(btn.dataset.close)));
-[$('lessonModalBackdrop'),$('studentModalBackdrop'),$('materialModalBackdrop')].forEach(backdrop=>backdrop.addEventListener('click',(e)=>{if(e.target===backdrop) backdrop.hidden=true;}));
+[$('lessonModalBackdrop'),$('studentModalBackdrop'),$('materialModalBackdrop'),$('trainerModalBackdrop')].forEach(backdrop=>backdrop.addEventListener('click',(e)=>{if(e.target===backdrop) backdrop.hidden=true;}));
 function closeModal(type){
-  const ids={lesson:'lessonModalBackdrop',student:'studentModalBackdrop',material:'materialModalBackdrop'};
+  const ids={lesson:'lessonModalBackdrop',student:'studentModalBackdrop',material:'materialModalBackdrop',trainer:'trainerModalBackdrop'};
   if(ids[type]) $(ids[type]).hidden=true;
 }
 
@@ -677,3 +801,4 @@ function escapeAttr(str=''){return escapeHtml(str);}
 renderCalendar();
 renderStudents();
 renderMaterials();
+renderTrainers();

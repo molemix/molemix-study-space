@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#fbf8f5" />
   <title>MoleMix Учебное пространство</title>
   <link rel="icon" href="assets/logo.png" />
-  <link rel="stylesheet" href="styles.css?v=20260903-2" />
+  <link rel="stylesheet" href="styles.css?v=20260903-3" />
 </head>
 <body>
   <section id="authGate" class="auth-gate">
@@ -45,6 +45,7 @@
       <button class="nav-btn active" data-view="calendar">Календарь</button>
       <button class="nav-btn" data-view="students">Ученики</button>
       <button class="nav-btn" data-view="materials">Материалы</button>
+      <button class="nav-btn" data-view="trainers">Тренажёры</button>
     </nav>
 
     <main>
@@ -139,6 +140,34 @@
 
         <div class="materials-count" id="materialsCount"></div>
         <div id="materialsGrid" class="materials-grid"></div>
+      </section>
+
+      <section id="trainersView" class="view">
+        <div class="section-heading trainers-heading">
+          <div>
+            <div class="eyebrow">Каталог MoleMix</div>
+            <h2>Тренажёры</h2>
+            <p>Все твои интерактивные тренажёры в одном месте.</p>
+          </div>
+          <button class="primary-btn" id="addTrainerBtn">+ Добавить тренажёр</button>
+        </div>
+
+        <div class="trainers-toolbar">
+          <label class="trainers-search">
+            <span class="sr-only">Поиск тренажёров</span>
+            <input id="trainerSearch" type="search" placeholder="Поиск по названию…" autocomplete="off" />
+          </label>
+          <label class="trainers-filter">
+            <span>Класс</span>
+            <select id="trainerClassFilter">
+              <option value="all">Все</option>
+            </select>
+          </label>
+          <button class="ghost-btn compact-filter-btn" id="clearTrainerFilters" type="button">Сбросить</button>
+        </div>
+
+        <div class="trainers-count" id="trainersCount"></div>
+        <div id="trainersGrid" class="trainers-grid"></div>
       </section>
     </main>
   </div>
@@ -337,7 +366,40 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="trainerModalBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="trainerModalTitle">
+      <div class="modal-head">
+        <div>
+          <div class="eyebrow">Тренажёр</div>
+          <h3 id="trainerModalTitle">Новый тренажёр</h3>
+        </div>
+        <button class="close-btn" data-close="trainer">×</button>
+      </div>
+      <form id="trainerForm" class="form-grid">
+        <input type="hidden" id="trainerId" />
+        <label class="full">
+          <span>Название</span>
+          <input id="trainerName" type="text" required placeholder="Например: Степень окисления" />
+        </label>
+        <label class="full">
+          <span>Класс</span>
+          <input id="trainerClass" type="text" required placeholder="Например: 9 класс" />
+        </label>
+        <label class="full">
+          <span>Ссылка на тренажёр</span>
+          <input id="trainerLink" type="url" inputmode="url" required placeholder="https://molemix.github.io/..." />
+        </label>
+        <div class="modal-actions full">
+          <button type="button" class="danger-btn hidden" id="deleteTrainerBtn">Удалить</button>
+          <div class="spacer"></div>
+          <button type="button" class="ghost-btn" data-close="trainer">Отмена</button>
+          <button type="submit" class="primary-btn">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div id="toast" class="toast" aria-live="polite"></div>
-  <script type="module" src="app.js?v=20260903-2"></script>
+  <script type="module" src="app.js?v=20260903-3"></script>
 </body>
 </html>
