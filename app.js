@@ -202,8 +202,14 @@ onAuthStateChanged(auth,user=>{
 });
 
 function switchView(name){
-  Object.values(views).forEach(v=>v.classList.remove('active-view'));
-  views[name].classList.add('active-view');
+  const target = views[name];
+  if(!target){
+    console.error(`Неизвестная страница: ${name}`);
+    toast('Не удалось открыть раздел. Обнови страницу.');
+    return;
+  }
+  Object.values(views).filter(Boolean).forEach(v=>v.classList.remove('active-view'));
+  target.classList.add('active-view');
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active', b.dataset.view===name));
   if(name==='calendar') renderCalendar();
   if(name==='students') renderStudents();
