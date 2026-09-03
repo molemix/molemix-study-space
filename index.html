@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#fbf8f5" />
   <title>MoleMix Учебное пространство</title>
   <link rel="icon" href="assets/logo.png" />
-  <link rel="stylesheet" href="styles.css?v=20260903-3" />
+  <link rel="stylesheet" href="styles.css?v=20260903-4" />
 </head>
 <body>
   <section id="authGate" class="auth-gate">
@@ -46,6 +46,7 @@
       <button class="nav-btn" data-view="students">Ученики</button>
       <button class="nav-btn" data-view="materials">Материалы</button>
       <button class="nav-btn" data-view="trainers">Тренажёры</button>
+      <button class="nav-btn" data-view="planner">Планер</button>
     </nav>
 
     <main>
@@ -168,6 +169,65 @@
 
         <div class="trainers-count" id="trainersCount"></div>
         <div id="trainersGrid" class="trainers-grid"></div>
+      </section>
+
+      <section id="plannerView" class="view">
+        <div class="section-heading planner-heading">
+          <div>
+            <div class="eyebrow">Личный список дел</div>
+            <h2>Планер</h2>
+            <p class="planner-quote">Записать. Сделать. Отпустить.</p>
+          </div>
+        </div>
+
+        <form id="quickTaskForm" class="planner-quick-add">
+          <label class="planner-task-input">
+            <span class="sr-only">Что нужно сделать</span>
+            <input id="quickTaskText" type="text" maxlength="220" placeholder="Что нужно сделать?" autocomplete="off" required />
+          </label>
+          <label class="planner-date-input">
+            <span>До</span>
+            <input id="quickTaskDate" type="date" />
+          </label>
+          <button type="submit" class="primary-btn planner-add-btn">+ Добавить</button>
+        </form>
+
+        <div id="plannerSummary" class="planner-summary">Сегодня: 0 дел · Выполнено: 0</div>
+
+        <div id="plannerSections" class="planner-sections">
+          <section id="overdueTaskSection" class="planner-group overdue-group" hidden>
+            <div class="planner-group-head"><h3>Просрочено</h3><span id="overdueTaskCount"></span></div>
+            <div id="overdueTaskList" class="task-list"></div>
+          </section>
+
+          <section id="todayTaskSection" class="planner-group" hidden>
+            <div class="planner-group-head"><h3>Сегодня</h3><span id="todayTaskCount"></span></div>
+            <div id="todayTaskList" class="task-list"></div>
+          </section>
+
+          <section id="soonTaskSection" class="planner-group" hidden>
+            <div class="planner-group-head"><h3>Скоро</h3><span id="soonTaskCount"></span></div>
+            <div id="soonTaskList" class="task-list"></div>
+          </section>
+
+          <section id="noDateTaskSection" class="planner-group" hidden>
+            <div class="planner-group-head"><h3>Без даты</h3><span id="noDateTaskCount"></span></div>
+            <div id="noDateTaskList" class="task-list"></div>
+          </section>
+
+          <div id="plannerEmpty" class="empty-state planner-empty" hidden>
+            <strong>Список пока пуст</strong><br />
+            <span>Запиши первое дело — и больше не держи его в голове.</span>
+          </div>
+
+          <details id="completedTasksDetails" class="completed-tasks" hidden>
+            <summary><span>✓ Выполнено — <strong id="completedTaskCount">0</strong></span><span class="details-chevron">⌄</span></summary>
+            <div class="completed-tasks-body">
+              <div id="completedTaskList" class="task-list completed-list"></div>
+              <button type="button" id="clearCompletedTasks" class="ghost-btn clear-completed-btn">Очистить выполненные</button>
+            </div>
+          </details>
+        </div>
       </section>
     </main>
   </div>
@@ -399,7 +459,36 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="taskModalBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="taskModalTitle">
+      <div class="modal-head">
+        <div>
+          <div class="eyebrow">Планер</div>
+          <h3 id="taskModalTitle">Редактировать задачу</h3>
+        </div>
+        <button class="close-btn" data-close="task" type="button">×</button>
+      </div>
+      <form id="taskForm" class="form-grid">
+        <input type="hidden" id="taskId" />
+        <label class="full">
+          <span>Что нужно сделать</span>
+          <input id="taskText" type="text" maxlength="220" required placeholder="Короткая задача" />
+        </label>
+        <label class="full">
+          <span>Срок <small class="field-hint">необязательно</small></span>
+          <input id="taskDate" type="date" />
+        </label>
+        <div class="modal-actions full">
+          <button type="button" class="danger-btn" id="deleteTaskBtn">Удалить</button>
+          <div class="spacer"></div>
+          <button type="button" class="ghost-btn" data-close="task">Отмена</button>
+          <button type="submit" class="primary-btn">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div id="toast" class="toast" aria-live="polite"></div>
-  <script type="module" src="app.js?v=20260903-3"></script>
+  <script type="module" src="app.js?v=20260903-4"></script>
 </body>
 </html>

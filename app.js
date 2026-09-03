@@ -1,4 +1,4 @@
-// MoleMix build 2026-09-03.3 — trainers library
+// MoleMix build 2026-09-03.4 — planner
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import {
   getAuth,
@@ -31,7 +31,7 @@ const db = getFirestore(firebaseApp);
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-const state = { students: [], lessons: [], materials: [], trainers: [] };
+const state = { students: [], lessons: [], materials: [], trainers: [], tasks: [] };
 let currentDate = new Date();
 currentDate.setDate(1);
 let activeStudentId = null;
@@ -40,6 +40,7 @@ let stopStudents = null;
 let stopLessons = null;
 let stopMaterials = null;
 let stopTrainers = null;
+let stopTasks = null;
 
 const $ = (id) => document.getElementById(id);
 const views = {
@@ -47,7 +48,8 @@ const views = {
   students: $('studentsView'),
   studentDetail: $('studentDetailView'),
   materials: $('materialsView'),
-  trainers: $('trainersView')
+  trainers: $('trainersView'),
+  planner: $('plannerView')
 };
 
 const STUDENT_COLORS = [
@@ -135,11 +137,16 @@ async function persistTrainer(trainer){
   const {id,...data}=trainer;
   await setDoc(userDoc('trainers',id), {...data, updatedAt:new Date().toISOString()});
 }
+async function persistTask(task){
+  const {id,...data}=task;
+  await setDoc(userDoc('tasks',id), {...data, updatedAt:new Date().toISOString()});
+}
 function renderAll(){
   renderCalendar();
   renderStudents();
   renderMaterials();
   renderTrainers();
+  renderPlanner();
   if(activeStudentId && getStudent(activeStudentId)) renderStudentDetail();
 }
 
@@ -162,12 +169,17 @@ function startCloudSync(user){
     state.trainers = snapshot.docs.map(d=>({id:d.id,...d.data()}));
     renderAll();
   }, handleFirestoreError);
+  stopTasks = onSnapshot(userCollection('tasks'), snapshot=>{
+    state.tasks = snapshot.docs.map(d=>({id:d.id,...d.data()}));
+    renderAll();
+  }, handleFirestoreError);
 }
 function stopCloudSync(){
   if(stopStudents){stopStudents();stopStudents=null;}
   if(stopLessons){stopLessons();stopLessons=null;}
   if(stopMaterials){stopMaterials();stopMaterials=null;}
   if(stopTrainers){stopTrainers();stopTrainers=null;}
+  if(stopTasks){stopTasks();stopTasks=null;}
 }
 function handleFirestoreError(error){
   console.error(error);
@@ -207,7 +219,7 @@ onAuthStateChanged(auth,user=>{
     startCloudSync(user);
   }else{
     stopCloudSync();
-    state.students=[]; state.lessons=[]; state.materials=[]; state.trainers=[]; activeStudentId=null;
+    state.students=[]; state.lessons=[]; state.materials=[]; state.trainers=[]; state.tasks=[]; activeStudentId=null;
     $('appShell').hidden=true;
     $('authGate').hidden=false;
     $('authMessage').textContent='Войди в свой Google-аккаунт, чтобы загрузить учеников и занятия.';
@@ -228,6 +240,7 @@ function switchView(name){
   if(name==='students') renderStudents();
   if(name==='materials') renderMaterials();
   if(name==='trainers') renderTrainers();
+  if(name==='planner') renderPlanner();
 }
 
 document.querySelectorAll('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>switchView(btn.dataset.view)));
@@ -629,6 +642,130 @@ $('deleteTrainerBtn').addEventListener('click',async()=>{
   }
 });
 
+
+function plannerTodayKey(){ return toISODate(new Date()); }
+function compareTaskDates(a,b){
+  const ad=a.dueDate||'9999-12-31', bd=b.dueDate||'9999-12-31';
+  if(ad!==bd) return ad.localeCompare(bd);
+  return String(a.createdAt||'').localeCompare(String(b.createdAt||''));
+}
+function plannerDateLabel(dateStr){
+  if(!dateStr) return '';
+  const today=plannerTodayKey();
+  const tomorrowDate=new Date(today+'T12:00:00');
+  tomorrowDate.setDate(tomorrowDate.getDate()+1);
+  const tomorrow=toISODate(tomorrowDate);
+  if(dateStr===today) return 'сегодня';
+  if(dateStr===tomorrow) return 'завтра';
+  const d=new Date(dateStr+'T12:00:00');
+  return d.toLocaleDateString('ru-RU',{day:'numeric',month:'long'});
+}
+function taskRow(task, completed=false){
+  const row=document.createElement('article');
+  row.className='planner-task'+(completed?' is-completed':'');
+  const checkbox=document.createElement('button');
+  checkbox.type='button';
+  checkbox.className='task-check';
+  checkbox.setAttribute('aria-label',completed?'Вернуть задачу в список':'Отметить задачу выполненной');
+  checkbox.innerHTML=completed?'✓':'';
+  checkbox.addEventListener('click',async()=>{
+    try{
+      await persistTask({...task,completed:!task.completed,completedAt:task.completed?null:new Date().toISOString()});
+    }catch(error){console.error(error);toast('Не удалось изменить задачу');}
+  });
+  const content=document.createElement('button');
+  content.type='button';
+  content.className='task-content';
+  const due=task.dueDate?`<span class="task-date${task.dueDate<plannerTodayKey()&&!completed?' overdue-date':''}">${escapeHtml(plannerDateLabel(task.dueDate))}</span>`:'';
+  content.innerHTML=`<strong>${escapeHtml(task.text||'Без названия')}</strong>${due}`;
+  content.addEventListener('click',()=>openTaskModal(task.id));
+  const edit=document.createElement('button');
+  edit.type='button'; edit.className='task-edit-btn'; edit.textContent='•••'; edit.title='Редактировать'; edit.setAttribute('aria-label','Редактировать задачу');
+  edit.addEventListener('click',()=>openTaskModal(task.id));
+  row.append(checkbox,content,edit);
+  return row;
+}
+function renderTaskGroup(sectionId,listId,countId,tasks){
+  const section=$(sectionId), list=$(listId), count=$(countId);
+  if(!section||!list) return;
+  section.hidden=!tasks.length;
+  if(count) count.textContent=tasks.length?String(tasks.length):'';
+  list.innerHTML='';
+  tasks.forEach(t=>list.appendChild(taskRow(t,false)));
+}
+function renderPlanner(){
+  const today=plannerTodayKey();
+  const active=state.tasks.filter(t=>!t.completed);
+  const completed=state.tasks.filter(t=>!!t.completed).sort((a,b)=>String(b.completedAt||b.updatedAt||'').localeCompare(String(a.completedAt||a.updatedAt||'')));
+  const overdue=active.filter(t=>t.dueDate && t.dueDate<today).sort(compareTaskDates);
+  const todayTasks=active.filter(t=>t.dueDate===today).sort(compareTaskDates);
+  const soon=active.filter(t=>t.dueDate && t.dueDate>today).sort(compareTaskDates);
+  const noDate=active.filter(t=>!t.dueDate).sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||'')));
+
+  renderTaskGroup('overdueTaskSection','overdueTaskList','overdueTaskCount',overdue);
+  renderTaskGroup('todayTaskSection','todayTaskList','todayTaskCount',todayTasks);
+  renderTaskGroup('soonTaskSection','soonTaskList','soonTaskCount',soon);
+  renderTaskGroup('noDateTaskSection','noDateTaskList','noDateTaskCount',noDate);
+
+  $('plannerSummary').textContent=`Сегодня: ${todayTasks.length} ${pluralRu(todayTasks.length,'дело','дела','дел')} · Выполнено: ${completed.length}`;
+  $('plannerEmpty').hidden=active.length!==0 || completed.length!==0;
+  $('completedTasksDetails').hidden=!completed.length;
+  $('completedTaskCount').textContent=completed.length;
+  $('completedTaskList').innerHTML='';
+  completed.forEach(t=>$('completedTaskList').appendChild(taskRow(t,true)));
+}
+function pluralRu(n,one,few,many){
+  const a=Math.abs(n)%100,b=a%10;
+  if(a>10&&a<20)return many;
+  if(b>1&&b<5)return few;
+  if(b===1)return one;
+  return many;
+}
+$('quickTaskForm').addEventListener('submit',async(e)=>{
+  e.preventDefault();
+  const text=$('quickTaskText').value.trim();
+  if(!text) return;
+  const task={id:uid('task'),text,dueDate:$('quickTaskDate').value||'',completed:false,completedAt:null,createdAt:new Date().toISOString()};
+  try{
+    await persistTask(task);
+    $('quickTaskText').value=''; $('quickTaskDate').value=''; $('quickTaskText').focus();
+    toast('Добавлено в планер');
+  }catch(error){console.error(error);toast('Не удалось добавить задачу');}
+});
+function openTaskModal(id){
+  const task=state.tasks.find(t=>t.id===id); if(!task)return;
+  $('taskId').value=task.id;
+  $('taskText').value=task.text||'';
+  $('taskDate').value=task.dueDate||'';
+  $('taskModalBackdrop').hidden=false;
+  setTimeout(()=>$('taskText').focus(),0);
+}
+$('taskForm').addEventListener('submit',async(e)=>{
+  e.preventDefault();
+  const id=$('taskId').value;
+  const existing=state.tasks.find(t=>t.id===id); if(!existing)return;
+  const text=$('taskText').value.trim(); if(!text)return toast('Напиши задачу');
+  try{
+    await persistTask({...existing,text,dueDate:$('taskDate').value||''});
+    closeModal('task'); toast('Задача обновлена');
+  }catch(error){console.error(error);toast('Не удалось сохранить задачу');}
+});
+$('deleteTaskBtn').addEventListener('click',async()=>{
+  const id=$('taskId').value; const task=state.tasks.find(t=>t.id===id); if(!task)return;
+  if(confirm(`Удалить задачу «${task.text}»?`)){
+    try{await deleteDoc(userDoc('tasks',id));closeModal('task');toast('Задача удалена');}
+    catch(error){console.error(error);toast('Не удалось удалить задачу');}
+  }
+});
+$('clearCompletedTasks').addEventListener('click',async()=>{
+  const done=state.tasks.filter(t=>t.completed); if(!done.length)return;
+  if(!confirm(`Удалить выполненные задачи (${done.length})?`))return;
+  try{
+    await Promise.all(done.map(t=>deleteDoc(userDoc('tasks',t.id))));
+    toast('Выполненные очищены');
+  }catch(error){console.error(error);toast('Не удалось очистить выполненные');}
+});
+
 $('addStudentBtn').addEventListener('click',()=>openStudentModal());
 function openStudentModal(id=null){
   const s=id?getStudent(id):null;
@@ -779,9 +916,9 @@ $('deleteLessonBtn').addEventListener('click',async()=>{
 });
 
 document.querySelectorAll('[data-close]').forEach(btn=>btn.addEventListener('click',()=>closeModal(btn.dataset.close)));
-[$('lessonModalBackdrop'),$('studentModalBackdrop'),$('materialModalBackdrop'),$('trainerModalBackdrop')].forEach(backdrop=>backdrop.addEventListener('click',(e)=>{if(e.target===backdrop) backdrop.hidden=true;}));
+[$('lessonModalBackdrop'),$('studentModalBackdrop'),$('materialModalBackdrop'),$('trainerModalBackdrop'),$('taskModalBackdrop')].forEach(backdrop=>backdrop.addEventListener('click',(e)=>{if(e.target===backdrop) backdrop.hidden=true;}));
 function closeModal(type){
-  const ids={lesson:'lessonModalBackdrop',student:'studentModalBackdrop',material:'materialModalBackdrop',trainer:'trainerModalBackdrop'};
+  const ids={lesson:'lessonModalBackdrop',student:'studentModalBackdrop',material:'materialModalBackdrop',trainer:'trainerModalBackdrop',task:'taskModalBackdrop'};
   if(ids[type]) $(ids[type]).hidden=true;
 }
 
@@ -802,3 +939,4 @@ renderCalendar();
 renderStudents();
 renderMaterials();
 renderTrainers();
+renderPlanner();
