@@ -1,4 +1,4 @@
-// MoleMix build 2026-09-03.4 — planner
+// MoleMix build 2026-09-05.2 — student topic map
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import {
   getAuth,
@@ -31,16 +31,21 @@ const db = getFirestore(firebaseApp);
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-const state = { students: [], lessons: [], materials: [], trainers: [], tasks: [] };
+const state = { students: [], lessons: [], studentTopics: [], materials: [], trainers: [], tasks: [] };
 let currentDate = new Date();
 currentDate.setDate(1);
 let activeStudentId = null;
+let activeStudentTab = 'lessons';
 let currentUser = null;
 let stopStudents = null;
 let stopLessons = null;
+let stopStudentTopics = null;
 let stopMaterials = null;
 let stopTrainers = null;
 let stopTasks = null;
+let lessonsSyncReady = false;
+let studentTopicsSyncReady = false;
+let initialTopicMigrationDone = false;
 
 const $ = (id) => document.getElementById(id);
 const views = {
@@ -129,6 +134,10 @@ async function persistLesson(lesson){
   const {id,...data}=lesson;
   await setDoc(userDoc('lessons',id), {...data, updatedAt:new Date().toISOString()});
 }
+async function persistStudentTopic(topic){
+  const {id,...data}=topic;
+  await setDoc(userDoc('studentTopics',id), {...data, updatedAt:new Date().toISOString()});
+}
 async function persistMaterial(material){
   const {id,...data}=material;
   await setDoc(userDoc('materials',id), {...data, updatedAt:new Date().toISOString()});
@@ -141,6 +150,87 @@ async function persistTask(task){
   const {id,...data}=task;
   await setDoc(userDoc('tasks',id), {...data, updatedAt:new Date().toISOString()});
 }
+
+function normalizeTopicName(value=''){
+  return String(value).trim().replace(/\s+/g,' ').toLocaleLowerCase('ru-RU');
+}
+function hashString(value=''){
+  let h=2166136261;
+  for(let i=0;i<value.length;i++){
+    h^=value.charCodeAt(i);
+    h=Math.imul(h,16777619);
+  }
+  return (h>>>0).toString(36);
+}
+function autoStudentTopicId(studentId,name){
+  return `topic_auto_${hashString(`${studentId}|${normalizeTopicName(name)}`)}`;
+}
+function getStudentTopic(id){ return state.studentTopics.find(t=>t.id===id); }
+function findStudentTopic(studentId,name){
+  const key=normalizeTopicName(name);
+  return state.studentTopics.find(t=>t.studentId===studentId && normalizeTopicName(t.name)===key);
+}
+async function syncLessonTopicsToStudentMap(lesson){
+  if(!lesson?.conducted || lesson.cancelled || !lesson.studentId) return;
+  const seen=new Set();
+  const saves=[];
+  for(const lessonTopic of (lesson.topics||[])){
+    const name=String(lessonTopic.name||'').trim();
+    const key=normalizeTopicName(name);
+    if(!name || !key || seen.has(key)) continue;
+    seen.add(key);
+    const existing=findStudentTopic(lesson.studentId,name);
+    if(existing?.hidden) continue;
+    const next={
+      ...(existing||{}),
+      id:existing?.id||autoStudentTopicId(lesson.studentId,name),
+      studentId:lesson.studentId,
+      name:existing?.name||name,
+      status:existing?.status==='planned'?'studying':(existing?.status||'studying'),
+      progress:Number(lessonTopic.progress)||existing?.progress||null,
+      comment:existing?.comment||'',
+      lastLessonDate:lesson.date||existing?.lastLessonDate||'',
+      createdAt:existing?.createdAt||new Date().toISOString()
+    };
+    saves.push(persistStudentTopic(next));
+  }
+  if(saves.length) await Promise.all(saves);
+}
+async function maybeMigrateExistingLessonTopics(){
+  if(initialTopicMigrationDone || !lessonsSyncReady || !studentTopicsSyncReady || !currentUser) return;
+  initialTopicMigrationDone=true;
+  const latestByKey=new Map();
+  const conducted=[...state.lessons]
+    .filter(l=>l.conducted && !l.cancelled && l.studentId)
+    .sort((a,b)=>`${a.date||''} ${a.time||''}`.localeCompare(`${b.date||''} ${b.time||''}`));
+  conducted.forEach(l=>{
+    (l.topics||[]).forEach(t=>{
+      const name=String(t.name||'').trim();
+      const normalized=normalizeTopicName(name);
+      if(!name || !normalized) return;
+      latestByKey.set(`${l.studentId}|${normalized}`,{lesson:l,topic:t,name});
+    });
+  });
+  const saves=[];
+  latestByKey.forEach(({lesson,topic,name})=>{
+    if(findStudentTopic(lesson.studentId,name)) return;
+    saves.push(persistStudentTopic({
+      id:autoStudentTopicId(lesson.studentId,name),
+      studentId:lesson.studentId,
+      name,
+      status:'studying',
+      progress:Number(topic.progress)||null,
+      comment:'',
+      lastLessonDate:lesson.date||'',
+      createdAt:new Date().toISOString()
+    }));
+  });
+  if(saves.length){
+    try{ await Promise.all(saves); }
+    catch(error){ console.error('Topic migration failed',error); }
+  }
+}
+
 function renderAll(){
   renderCalendar();
   renderStudents();
@@ -152,6 +242,9 @@ function renderAll(){
 
 function startCloudSync(user){
   stopCloudSync();
+  lessonsSyncReady=false;
+  studentTopicsSyncReady=false;
+  initialTopicMigrationDone=false;
   $('authMessage').textContent='Загружаю твои данные…';
   stopStudents = onSnapshot(userCollection('students'), snapshot=>{
     state.students = snapshot.docs.map(d=>({id:d.id,...d.data()}));
@@ -159,7 +252,15 @@ function startCloudSync(user){
   }, handleFirestoreError);
   stopLessons = onSnapshot(userCollection('lessons'), snapshot=>{
     state.lessons = snapshot.docs.map(d=>({id:d.id,...d.data()}));
+    lessonsSyncReady=true;
     renderAll();
+    maybeMigrateExistingLessonTopics();
+  }, handleFirestoreError);
+  stopStudentTopics = onSnapshot(userCollection('studentTopics'), snapshot=>{
+    state.studentTopics = snapshot.docs.map(d=>({id:d.id,...d.data()}));
+    studentTopicsSyncReady=true;
+    renderAll();
+    maybeMigrateExistingLessonTopics();
   }, handleFirestoreError);
   stopMaterials = onSnapshot(userCollection('materials'), snapshot=>{
     state.materials = snapshot.docs.map(d=>({id:d.id,...d.data()}));
@@ -177,6 +278,7 @@ function startCloudSync(user){
 function stopCloudSync(){
   if(stopStudents){stopStudents();stopStudents=null;}
   if(stopLessons){stopLessons();stopLessons=null;}
+  if(stopStudentTopics){stopStudentTopics();stopStudentTopics=null;}
   if(stopMaterials){stopMaterials();stopMaterials=null;}
   if(stopTrainers){stopTrainers();stopTrainers=null;}
   if(stopTasks){stopTasks();stopTasks=null;}
@@ -219,7 +321,7 @@ onAuthStateChanged(auth,user=>{
     startCloudSync(user);
   }else{
     stopCloudSync();
-    state.students=[]; state.lessons=[]; state.materials=[]; state.trainers=[]; state.tasks=[]; activeStudentId=null;
+    state.students=[]; state.lessons=[]; state.studentTopics=[]; state.materials=[]; state.trainers=[]; state.tasks=[]; activeStudentId=null; activeStudentTab='lessons';
     $('appShell').hidden=true;
     $('authGate').hidden=false;
     $('authMessage').textContent='Войди в свой Google-аккаунт, чтобы загрузить учеников и занятия.';
@@ -312,14 +414,15 @@ function renderStudents(){
   grid.innerHTML='';
   students.forEach(s=>{
     const lessons=state.lessons.filter(l=>l.studentId===s.id && !l.cancelled);
+    const conductedLessons=lessons.filter(l=>l.conducted);
     const paid=lessons.filter(l=>l.paid).reduce((sum,l)=>sum+Number(l.price||0),0);
-    const progresses=lessons.flatMap(l=>(l.topics||[]).map(t=>Number(t.progress)).filter(Boolean));
+    const progresses=conductedLessons.flatMap(l=>(l.topics||[]).map(t=>Number(t.progress)).filter(Boolean));
     const avg=progresses.length?(progresses.reduce((a,b)=>a+b,0)/progresses.length).toFixed(1):'—';
     const card=document.createElement('button');
     card.className='student-card';
     card.style.setProperty('--student-color',s.color||'#cdb7f6');
     card.innerHTML=`<h3>${escapeHtml(s.name)}</h3><p>${escapeHtml(s.className||'Класс не указан')} · ${money(s.price)} / занятие</p>
-      <div class="student-stats"><div class="student-stat"><strong>${lessons.length}</strong><span>занятий</span></div><div class="student-stat"><strong>${avg}${avg==='—'?'':'/10'}</strong><span>средний прогресс</span></div><div class="student-stat"><strong>${money(paid)}</strong><span>получено</span></div></div>`;
+      <div class="student-stats"><div class="student-stat"><strong>${conductedLessons.length}</strong><span>занятий</span></div><div class="student-stat"><strong>${avg}${avg==='—'?'':'/10'}</strong><span>средний прогресс</span></div><div class="student-stat"><strong>${money(paid)}</strong><span>получено</span></div></div>`;
     card.addEventListener('click',()=>openStudentDetail(s.id));
     grid.appendChild(card);
   });
@@ -327,6 +430,7 @@ function renderStudents(){
 
 function openStudentDetail(id){
   activeStudentId=id;
+  activeStudentTab='lessons';
   renderStudentDetail();
   switchView('studentDetail');
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
@@ -339,6 +443,7 @@ function renderStudentDetail(){
   const paid=activeLessons.filter(l=>l.paid).reduce((sum,l)=>sum+Number(l.price||0),0);
   const progresses=activeLessons.flatMap(l=>(l.topics||[]).map(t=>Number(t.progress)).filter(Boolean));
   const avg=progresses.length?(progresses.reduce((a,b)=>a+b,0)/progresses.length).toFixed(1):'—';
+  const studentTopics=state.studentTopics.filter(t=>t.studentId===s.id && !t.hidden);
   const html=`
     <div class="detail-header" style="--student-color:${s.color||'#cdb7f6'}">
       <div class="detail-title">
@@ -360,14 +465,91 @@ function renderStudentDetail(){
       ${lessonLinkBox(s.lessonLink)}
       ${profileBox('Общая заметка',s.note)}
     </div>
-    <div class="journal">
-      <div class="journal-head"><div><div class="eyebrow">История занятий</div><h3>Журнал</h3></div><button class="primary-btn" id="addLessonForStudent">+ Занятие</button></div>
-      ${lessons.length ? renderJournalTable(lessons) : '<div class="empty-state" style="margin:16px">У этого ученика пока нет занятий.</div>'}
+
+    <div class="student-inner-tabs" role="tablist" aria-label="Карточка ученика">
+      <button type="button" class="student-inner-tab ${activeStudentTab==='lessons'?'active':''}" data-student-tab="lessons">Занятия</button>
+      <button type="button" class="student-inner-tab ${activeStudentTab==='topics'?'active':''}" data-student-tab="topics">Темы <span>${studentTopics.length||''}</span></button>
+    </div>
+
+    <div id="studentLessonsPanel" class="student-tab-panel" ${activeStudentTab==='lessons'?'':'hidden'}>
+      <div class="journal">
+        <div class="journal-head"><div><div class="eyebrow">История занятий</div><h3>Журнал</h3></div><button class="primary-btn" id="addLessonForStudent">+ Занятие</button></div>
+        ${lessons.length ? renderJournalTable(lessons) : '<div class="empty-state" style="margin:16px">У этого ученика пока нет занятий.</div>'}
+      </div>
+    </div>
+
+    <div id="studentTopicsPanel" class="student-tab-panel" ${activeStudentTab==='topics'?'':'hidden'}>
+      ${renderStudentTopicMap(s.id)}
     </div>`;
   $('studentDetail').innerHTML=html;
   $('editStudentProfile').addEventListener('click',()=>openStudentModal(s.id));
-  $('addLessonForStudent').addEventListener('click',()=>openLessonModal(null,toISODate(new Date()),s.id));
+  $('addLessonForStudent')?.addEventListener('click',()=>openLessonModal(null,toISODate(new Date()),s.id));
   document.querySelectorAll('[data-open-lesson]').forEach(el=>el.addEventListener('click',()=>openLessonModal(el.dataset.openLesson)));
+  document.querySelectorAll('[data-student-tab]').forEach(btn=>btn.addEventListener('click',()=>{
+    activeStudentTab=btn.dataset.studentTab;
+    renderStudentDetail();
+  }));
+  $('addStudentTopicBtn')?.addEventListener('click',()=>openStudentTopicModal());
+  document.querySelectorAll('[data-edit-student-topic]').forEach(btn=>btn.addEventListener('click',()=>openStudentTopicModal(btn.dataset.editStudentTopic)));
+}
+function topicStatusMeta(status){
+  if(status==='review') return {label:'Повторить',group:'Нужно повторить',className:'review'};
+  if(status==='planned') return {label:'В планах',group:'В планах',className:'planned'};
+  if(status==='studied') return {label:'Изучено',group:'Изучено',className:'studied'};
+  return {label:'Изучаем',group:'Изучаем',className:'studying'};
+}
+function renderStudentTopicCard(topic){
+  const meta=topicStatusMeta(topic.status);
+  const progress=Number(topic.progress)||null;
+  return `<article class="student-topic-card ${meta.className}">
+    <button type="button" class="student-topic-edit" data-edit-student-topic="${topic.id}" aria-label="Редактировать тему" title="Редактировать">•••</button>
+    <div class="student-topic-card-head">
+      <h4>${escapeHtml(topic.name||'Без названия')}</h4>
+      <span class="student-topic-status ${meta.className}">${meta.label}</span>
+    </div>
+    <div class="student-topic-progress">
+      <div class="student-topic-progress-label"><span>Освоение</span><strong>${progress?`${progress}/10`:'—'}</strong></div>
+      <div class="student-topic-progress-track"><span style="width:${progress?progress*10:0}%"></span></div>
+    </div>
+    <div class="student-topic-comment">
+      <span>Проблема / комментарий</span>
+      <p class="${topic.comment?'':'muted-empty'}">${escapeHtml(topic.comment||'Не заполнено')}</p>
+    </div>
+    ${topic.lastLessonDate?`<div class="student-topic-date">Последнее занятие по теме: ${escapeHtml(formatDateRu(topic.lastLessonDate,false))}</div>`:''}
+  </article>`;
+}
+function renderStudentTopicMap(studentId){
+  const all=state.studentTopics
+    .filter(t=>t.studentId===studentId && !t.hidden)
+    .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ru',{numeric:true,sensitivity:'base'}));
+  const groups=[
+    {status:'review',title:'Нужно повторить',hint:'Темы, к которым стоит вернуться.'},
+    {status:'studying',title:'Изучаем',hint:'Темы, которые сейчас в работе.'},
+    {status:'planned',title:'В планах',hint:'Будущие темы.'},
+    {status:'studied',title:'Изучено',hint:'Темы, которые уже прошли.'}
+  ];
+  const body=groups.map(g=>{
+    const topics=all.filter(t=>(t.status||'studying')===g.status);
+    if(!topics.length) return '';
+    return `<section class="student-topic-group">
+      <div class="student-topic-group-head">
+        <div><h3>${g.title}</h3><p>${g.hint}</p></div>
+        <span>${topics.length}</span>
+      </div>
+      <div class="student-topic-grid">${topics.map(renderStudentTopicCard).join('')}</div>
+    </section>`;
+  }).join('');
+  return `<div class="student-topics-wrap">
+    <div class="student-topics-head">
+      <div>
+        <div class="eyebrow">Учебная карта</div>
+        <h3>Темы ученика</h3>
+        <p>Что уже проходили, что изучаете сейчас и что запланировано дальше.</p>
+      </div>
+      <button type="button" class="primary-btn" id="addStudentTopicBtn">+ Добавить тему</button>
+    </div>
+    ${all.length?body:'<div class="empty-state student-topics-empty"><strong>Карта тем пока пустая</strong><br><span>Добавь будущую тему вручную или отметь занятие как проведённое — темы из урока появятся здесь автоматически.</span></div>'}
+  </div>`;
 }
 function profileBox(label,value){return `<div class="profile-info"><span>${label}</span><p class="${value?'':'muted-empty'}">${escapeHtml(value||'Не заполнено')}</p></div>`}
 function lessonLinkBox(value){
@@ -815,6 +997,63 @@ $('archiveStudentBtn').addEventListener('click',async()=>{
   }
 });
 
+
+function openStudentTopicModal(id=null){
+  const topic=id?getStudentTopic(id):null;
+  if(!activeStudentId) return;
+  $('studentTopicModalTitle').textContent=topic?'Редактировать тему':'Новая тема';
+  $('studentTopicId').value=topic?.id||'';
+  $('studentTopicName').value=topic?.name||'';
+  $('studentTopicStatus').value=topic?.status||'planned';
+  $('studentTopicProgress').value=topic?.progress||'';
+  $('studentTopicComment').value=topic?.comment||'';
+  $('deleteStudentTopicBtn').classList.toggle('hidden',!topic);
+  $('studentTopicModalBackdrop').hidden=false;
+  setTimeout(()=>$('studentTopicName').focus(),0);
+}
+$('studentTopicForm').addEventListener('submit',async(e)=>{
+  e.preventDefault();
+  if(!activeStudentId) return toast('Сначала открой ученика');
+  let id=$('studentTopicId').value||uid('topic');
+  let existing=getStudentTopic(id);
+  const name=$('studentTopicName').value.trim();
+  if(!name) return toast('Напиши название темы');
+  const duplicate=state.studentTopics.find(t=>t.studentId===activeStudentId && t.id!==id && normalizeTopicName(t.name)===normalizeTopicName(name));
+  if(duplicate && !duplicate.hidden) return toast('Такая тема уже есть в карте ученика');
+  if(duplicate?.hidden && !existing){ id=duplicate.id; existing=duplicate; }
+  const topic={
+    ...(existing||{}),
+    id,
+    studentId:activeStudentId,
+    name,
+    status:$('studentTopicStatus').value,
+    progress:Number($('studentTopicProgress').value)||null,
+    comment:$('studentTopicComment').value.trim(),
+    hidden:false,
+    lastLessonDate:existing?.lastLessonDate||'',
+    createdAt:existing?.createdAt||new Date().toISOString()
+  };
+  try{
+    await persistStudentTopic(topic);
+    closeModal('studentTopic');
+    activeStudentTab='topics';
+    toast(existing?'Тема обновлена':'Тема добавлена');
+  }catch(error){console.error(error);toast('Не удалось сохранить тему');}
+});
+$('deleteStudentTopicBtn').addEventListener('click',async()=>{
+  const id=$('studentTopicId').value;
+  const topic=getStudentTopic(id);
+  if(!id||!topic)return;
+  if(confirm(`Убрать тему «${topic.name}» из учебной карты? История занятий останется.`)){
+    try{
+      await persistStudentTopic({...topic,hidden:true});
+      closeModal('studentTopic');
+      activeStudentTab='topics';
+      toast('Тема убрана из карты');
+    }catch(error){console.error(error);toast('Не удалось убрать тему');}
+  }
+});
+
 function populateStudentSelect(selectedId=''){
   const select=$('lessonStudent');
   const students=state.students.filter(s=>!s.archived).sort((a,b)=>a.name.localeCompare(b.name,'ru'));
@@ -882,6 +1121,7 @@ $('lessonForm').addEventListener('submit',async(e)=>{
   if(lesson.cancelled) lesson.conducted=false;
   try{
     await persistLesson(lesson);
+    await syncLessonTopicsToStudentMap(lesson);
     closeModal('lesson');
     toast('Занятие сохранено в облаке');
   }catch(error){console.error(error);toast('Не удалось сохранить занятие');}
@@ -916,9 +1156,9 @@ $('deleteLessonBtn').addEventListener('click',async()=>{
 });
 
 document.querySelectorAll('[data-close]').forEach(btn=>btn.addEventListener('click',()=>closeModal(btn.dataset.close)));
-[$('lessonModalBackdrop'),$('studentModalBackdrop'),$('materialModalBackdrop'),$('trainerModalBackdrop'),$('taskModalBackdrop')].forEach(backdrop=>backdrop.addEventListener('click',(e)=>{if(e.target===backdrop) backdrop.hidden=true;}));
+[$('lessonModalBackdrop'),$('studentModalBackdrop'),$('studentTopicModalBackdrop'),$('materialModalBackdrop'),$('trainerModalBackdrop'),$('taskModalBackdrop')].forEach(backdrop=>backdrop.addEventListener('click',(e)=>{if(e.target===backdrop) backdrop.hidden=true;}));
 function closeModal(type){
-  const ids={lesson:'lessonModalBackdrop',student:'studentModalBackdrop',material:'materialModalBackdrop',trainer:'trainerModalBackdrop',task:'taskModalBackdrop'};
+  const ids={lesson:'lessonModalBackdrop',student:'studentModalBackdrop',studentTopic:'studentTopicModalBackdrop',material:'materialModalBackdrop',trainer:'trainerModalBackdrop',task:'taskModalBackdrop'};
   if(ids[type]) $(ids[type]).hidden=true;
 }
 
