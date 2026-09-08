@@ -6,9 +6,17 @@
   <meta name="theme-color" content="#fbf8f5" />
   <title>MoleMix Учебное пространство</title>
   <link rel="icon" href="assets/logo.png" />
-  <link rel="stylesheet" href="styles.css?v=20260905-topics1" />
+  <link rel="stylesheet" href="styles.css?v=20260908-organize1" />
 </head>
 <body>
+  <div class="ambient-lines" aria-hidden="true">
+    <svg viewBox="0 0 1000 1000" preserveAspectRatio="none">
+      <path class="ambient-line line-one" vector-effect="non-scaling-stroke" d="M-90 155 C120 30 245 280 430 205 C595 138 670 65 1085 190" />
+      <path class="ambient-line line-two" vector-effect="non-scaling-stroke" d="M-85 610 C110 470 250 735 455 650 C640 573 770 440 1085 625" />
+      <path class="ambient-line line-three" vector-effect="non-scaling-stroke" d="M175 1065 C245 830 430 1000 610 885 C785 775 850 715 1070 830" />
+    </svg>
+  </div>
+
   <section id="authGate" class="auth-gate">
     <div class="auth-card">
       <img src="assets/logo.png" alt="MoleMix" class="auth-logo" />
@@ -55,6 +63,7 @@
           <div>
             <div class="eyebrow">Планер занятий</div>
             <h2 id="monthTitle">Сентябрь 2026</h2>
+            <p class="section-quote">Пусть время работает на тебя.</p>
           </div>
           <div class="month-controls">
             <button class="icon-btn" id="prevMonth" aria-label="Предыдущий месяц">←</button>
@@ -94,7 +103,7 @@
           <div>
             <div class="eyebrow">Личные страницы</div>
             <h2>Ученики</h2>
-            <p>Профиль, учебная история, темы, прогресс, ДЗ и оплаты.</p>
+            <p class="section-quote">Важно видеть не только результат, но и путь.</p>
           </div>
           <button class="primary-btn" id="addStudentBtn">+ Добавить ученика</button>
         </div>
@@ -111,9 +120,12 @@
           <div>
             <div class="eyebrow">Личная библиотека</div>
             <h2>Материалы</h2>
-            <p>Конспекты и PDF в одном месте — с поиском по названию, классу и уровню.</p>
+            <p class="section-quote">Порядок освобождает место для идей.</p>
           </div>
-          <button class="primary-btn" id="addMaterialBtn">+ Добавить материал</button>
+          <div class="section-actions">
+            <button class="soft-btn" id="addMaterialFolderBtn" type="button">+ Папка</button>
+            <button class="primary-btn" id="addMaterialBtn">+ Добавить материал</button>
+          </div>
         </div>
 
         <div class="materials-toolbar">
@@ -139,6 +151,8 @@
           <button class="ghost-btn compact-filter-btn" id="clearMaterialFilters" type="button">Сбросить</button>
         </div>
 
+        <div id="materialFolderContext" class="folder-context" hidden></div>
+        <div id="materialFoldersSection" class="library-folders-section"></div>
         <div class="materials-count" id="materialsCount"></div>
         <div id="materialsGrid" class="materials-grid"></div>
       </section>
@@ -148,9 +162,12 @@
           <div>
             <div class="eyebrow">Каталог MoleMix</div>
             <h2>Тренажёры</h2>
-            <p>Все твои интерактивные тренажёры в одном месте.</p>
+            <p class="section-quote">Навык появляется в практике.</p>
           </div>
-          <button class="primary-btn" id="addTrainerBtn">+ Добавить тренажёр</button>
+          <div class="section-actions">
+            <button class="soft-btn" id="addTrainerFolderBtn" type="button">+ Папка</button>
+            <button class="primary-btn" id="addTrainerBtn">+ Добавить тренажёр</button>
+          </div>
         </div>
 
         <div class="trainers-toolbar">
@@ -167,6 +184,8 @@
           <button class="ghost-btn compact-filter-btn" id="clearTrainerFilters" type="button">Сбросить</button>
         </div>
 
+        <div id="trainerFolderContext" class="folder-context" hidden></div>
+        <div id="trainerFoldersSection" class="library-folders-section"></div>
         <div class="trainers-count" id="trainersCount"></div>
         <div id="trainersGrid" class="trainers-grid"></div>
       </section>
@@ -176,7 +195,7 @@
           <div>
             <div class="eyebrow">Личный список дел</div>
             <h2>Планер</h2>
-            <p class="planner-quote">Записать. Сделать. Отпустить.</p>
+            <p class="section-quote planner-quote">Записать. Сделать. Отпустить.</p>
           </div>
         </div>
 
@@ -465,6 +484,10 @@
           <span>Комментарий</span>
           <textarea id="materialComment" rows="3" placeholder="Например: полная теория + задания"></textarea>
         </label>
+        <div class="full folder-choice-field">
+          <span>Папки <small class="field-hint">можно выбрать несколько</small></span>
+          <div id="materialFolderChoices" class="folder-choice-list"></div>
+        </div>
         <div class="modal-actions full">
           <button type="button" class="danger-btn hidden" id="deleteMaterialBtn">Удалить</button>
           <div class="spacer"></div>
@@ -498,10 +521,46 @@
           <span>Ссылка на тренажёр</span>
           <input id="trainerLink" type="url" inputmode="url" required placeholder="https://molemix.github.io/..." />
         </label>
+        <div class="full folder-choice-field">
+          <span>Папки <small class="field-hint">можно выбрать несколько</small></span>
+          <div id="trainerFolderChoices" class="folder-choice-list"></div>
+        </div>
         <div class="modal-actions full">
           <button type="button" class="danger-btn hidden" id="deleteTrainerBtn">Удалить</button>
           <div class="spacer"></div>
           <button type="button" class="ghost-btn" data-close="trainer">Отмена</button>
+          <button type="submit" class="primary-btn">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+
+  <div class="modal-backdrop" id="folderModalBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="folderModalTitle">
+      <div class="modal-head">
+        <div>
+          <div class="eyebrow">Подборка</div>
+          <h3 id="folderModalTitle">Новая папка</h3>
+        </div>
+        <button class="close-btn" data-close="folder" type="button">×</button>
+      </div>
+      <form id="folderForm" class="form-grid">
+        <input type="hidden" id="folderKind" />
+        <input type="hidden" id="folderId" />
+        <label class="full">
+          <span>Название папки</span>
+          <input id="folderName" type="text" maxlength="120" required placeholder="Например: ОГЭ" />
+        </label>
+        <div class="full color-field">
+          <span>Цвет папки</span>
+          <input type="hidden" id="folderColor" value="#d9f6c4" />
+          <div id="folderColorPalette" class="color-palette folder-color-palette" aria-label="Выбор цвета папки"></div>
+        </div>
+        <div class="modal-actions full">
+          <button type="button" class="danger-btn hidden" id="deleteFolderBtn">Удалить папку</button>
+          <div class="spacer"></div>
+          <button type="button" class="ghost-btn" data-close="folder">Отмена</button>
           <button type="submit" class="primary-btn">Сохранить</button>
         </div>
       </form>
@@ -538,6 +597,6 @@
   </div>
 
   <div id="toast" class="toast" aria-live="polite"></div>
-  <script type="module" src="app.js?v=20260905-topics1"></script>
+  <script type="module" src="app.js?v=20260908-organize1"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-// MoleMix build 2026-09-05.2 — student topic map
+// MoleMix build 2026-09-08.1 — folders, manual order, acid-green background
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import {
   getAuth,
@@ -31,17 +31,21 @@ const db = getFirestore(firebaseApp);
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-const state = { students: [], lessons: [], studentTopics: [], materials: [], trainers: [], tasks: [] };
+const state = { students: [], lessons: [], studentTopics: [], materials: [], materialFolders: [], trainers: [], trainerFolders: [], tasks: [] };
 let currentDate = new Date();
 currentDate.setDate(1);
 let activeStudentId = null;
 let activeStudentTab = 'lessons';
+let activeMaterialFolderId = null;
+let activeTrainerFolderId = null;
 let currentUser = null;
 let stopStudents = null;
 let stopLessons = null;
 let stopStudentTopics = null;
 let stopMaterials = null;
+let stopMaterialFolders = null;
 let stopTrainers = null;
+let stopTrainerFolders = null;
 let stopTasks = null;
 let lessonsSyncReady = false;
 let studentTopicsSyncReady = false;
@@ -87,6 +91,54 @@ function renderStudentColorPalette(selected){
     palette.appendChild(btn);
   });
 }
+
+const FOLDER_COLORS = ['#d9f6c4','#e6f8d9','#d9efe8','#dcebf8','#e7def8','#f2def2','#f8dce7','#fae5cf','#f8efca','#ece6df','#dce5d1','#e9e2f0'];
+function renderFolderColorPalette(selected){
+  const palette=$('folderColorPalette');
+  if(!palette) return;
+  const current=selected || $('folderColor').value || FOLDER_COLORS[0];
+  $('folderColor').value=current;
+  const colors=FOLDER_COLORS.includes(current)?FOLDER_COLORS:[current,...FOLDER_COLORS];
+  palette.innerHTML='';
+  colors.forEach(color=>{
+    const btn=document.createElement('button');
+    btn.type='button';
+    btn.className='color-swatch'+(color.toLowerCase()===current.toLowerCase()?' selected':'');
+    btn.style.setProperty('--swatch',color);
+    btn.setAttribute('aria-label',`Выбрать цвет папки ${color}`);
+    btn.addEventListener('click',()=>{
+      $('folderColor').value=color;
+      palette.querySelectorAll('.color-swatch').forEach(x=>x.classList.remove('selected'));
+      btn.classList.add('selected');
+    });
+    palette.appendChild(btn);
+  });
+}
+function finiteOrder(v){ return Number.isFinite(Number(v)) ? Number(v) : null; }
+function createdSort(a,b){
+  const ad=String(a.createdAt||''), bd=String(b.createdAt||'');
+  if(ad!==bd) return ad.localeCompare(bd);
+  return String(a.name||'').localeCompare(String(b.name||''),'ru',{numeric:true,sensitivity:'base'});
+}
+function sortByOrder(items, getter=(x)=>x.order){
+  return [...items].sort((a,b)=>{
+    const ao=finiteOrder(getter(a)), bo=finiteOrder(getter(b));
+    if(ao!==null && bo!==null && ao!==bo) return ao-bo;
+    if(ao!==null && bo===null) return 1;
+    if(ao===null && bo!==null) return -1;
+    return createdSort(a,b);
+  });
+}
+function nextOrder(items,getter=(x)=>x.order){
+  const vals=items.map(getter).map(finiteOrder).filter(v=>v!==null);
+  return (vals.length?Math.max(...vals):items.length*100)+100;
+}
+function folderOrderValue(item,folderId){ return item?.folderOrders?.[folderId]; }
+function folderIdsOf(item){ return Array.isArray(item?.folderIds)?item.folderIds.filter(Boolean):[]; }
+function libraryFolderById(kind,id){
+  return (kind==='material'?state.materialFolders:state.trainerFolders).find(f=>f.id===id);
+}
+
 
 function uid(prefix='id'){
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
@@ -146,6 +198,11 @@ async function persistTrainer(trainer){
   const {id,...data}=trainer;
   await setDoc(userDoc('trainers',id), {...data, updatedAt:new Date().toISOString()});
 }
+async function persistLibraryFolder(kind,folder){
+  const {id,...data}=folder;
+  const collectionName=kind==='material'?'materialFolders':'trainerFolders';
+  await setDoc(userDoc(collectionName,id), {...data, updatedAt:new Date().toISOString()});
+}
 async function persistTask(task){
   const {id,...data}=task;
   await setDoc(userDoc('tasks',id), {...data, updatedAt:new Date().toISOString()});
@@ -187,6 +244,7 @@ async function syncLessonTopicsToStudentMap(lesson){
       studentId:lesson.studentId,
       name:existing?.name||name,
       status:existing?.status==='planned'?'studying':(existing?.status||'studying'),
+      order:(existing && (existing.status||'studying')!=='planned') ? (existing.order ?? nextOrder(state.studentTopics.filter(t=>t.studentId===lesson.studentId && !t.hidden && (t.status||'studying')===(existing.status||'studying')))) : (nextOrder(state.studentTopics.filter(t=>t.studentId===lesson.studentId && !t.hidden && (t.status||'studying')==='studying')) + saves.length*100),
       progress:Number(lessonTopic.progress)||existing?.progress||null,
       comment:existing?.comment||'',
       lastLessonDate:lesson.date||existing?.lastLessonDate||'',
@@ -219,6 +277,7 @@ async function maybeMigrateExistingLessonTopics(){
       studentId:lesson.studentId,
       name,
       status:'studying',
+      order:nextOrder(state.studentTopics.filter(t=>t.studentId===lesson.studentId && !t.hidden && (t.status||'studying')==='studying')) + saves.length*100,
       progress:Number(topic.progress)||null,
       comment:'',
       lastLessonDate:lesson.date||'',
@@ -266,8 +325,18 @@ function startCloudSync(user){
     state.materials = snapshot.docs.map(d=>({id:d.id,...d.data()}));
     renderAll();
   }, handleFirestoreError);
+  stopMaterialFolders = onSnapshot(userCollection('materialFolders'), snapshot=>{
+    state.materialFolders = snapshot.docs.map(d=>({id:d.id,...d.data()}));
+    if(activeMaterialFolderId && !state.materialFolders.some(f=>f.id===activeMaterialFolderId)) activeMaterialFolderId=null;
+    renderAll();
+  }, handleFirestoreError);
   stopTrainers = onSnapshot(userCollection('trainers'), snapshot=>{
     state.trainers = snapshot.docs.map(d=>({id:d.id,...d.data()}));
+    renderAll();
+  }, handleFirestoreError);
+  stopTrainerFolders = onSnapshot(userCollection('trainerFolders'), snapshot=>{
+    state.trainerFolders = snapshot.docs.map(d=>({id:d.id,...d.data()}));
+    if(activeTrainerFolderId && !state.trainerFolders.some(f=>f.id===activeTrainerFolderId)) activeTrainerFolderId=null;
     renderAll();
   }, handleFirestoreError);
   stopTasks = onSnapshot(userCollection('tasks'), snapshot=>{
@@ -280,7 +349,9 @@ function stopCloudSync(){
   if(stopLessons){stopLessons();stopLessons=null;}
   if(stopStudentTopics){stopStudentTopics();stopStudentTopics=null;}
   if(stopMaterials){stopMaterials();stopMaterials=null;}
+  if(stopMaterialFolders){stopMaterialFolders();stopMaterialFolders=null;}
   if(stopTrainers){stopTrainers();stopTrainers=null;}
+  if(stopTrainerFolders){stopTrainerFolders();stopTrainerFolders=null;}
   if(stopTasks){stopTasks();stopTasks=null;}
 }
 function handleFirestoreError(error){
@@ -321,7 +392,7 @@ onAuthStateChanged(auth,user=>{
     startCloudSync(user);
   }else{
     stopCloudSync();
-    state.students=[]; state.lessons=[]; state.studentTopics=[]; state.materials=[]; state.trainers=[]; state.tasks=[]; activeStudentId=null; activeStudentTab='lessons';
+    state.students=[]; state.lessons=[]; state.studentTopics=[]; state.materials=[]; state.materialFolders=[]; state.trainers=[]; state.trainerFolders=[]; state.tasks=[]; activeStudentId=null; activeStudentTab='lessons'; activeMaterialFolderId=null; activeTrainerFolderId=null;
     $('appShell').hidden=true;
     $('authGate').hidden=false;
     $('authMessage').textContent='Войди в свой Google-аккаунт, чтобы загрузить учеников и занятия.';
@@ -491,6 +562,7 @@ function renderStudentDetail(){
   }));
   $('addStudentTopicBtn')?.addEventListener('click',()=>openStudentTopicModal());
   document.querySelectorAll('[data-edit-student-topic]').forEach(btn=>btn.addEventListener('click',()=>openStudentTopicModal(btn.dataset.editStudentTopic)));
+  if(activeStudentTab==='topics') bindTopicOrdering(s.id);
 }
 function topicStatusMeta(status){
   if(status==='review') return {label:'Повторить',group:'Нужно повторить',className:'review'};
@@ -498,11 +570,18 @@ function topicStatusMeta(status){
   if(status==='studied') return {label:'Изучено',group:'Изучено',className:'studied'};
   return {label:'Изучаем',group:'Изучаем',className:'studying'};
 }
-function renderStudentTopicCard(topic){
+function topicMoveButton(topic,direction,disabled){
+  const label=direction==='up'?'Выше':'Ниже';
+  const symbol=direction==='up'?'↑':'↓';
+  return `<button type="button" class="order-step-btn" data-topic-move="${topic.id}" data-direction="${direction}" ${disabled?'disabled':''} aria-label="${label}">${symbol}</button>`;
+}
+function renderStudentTopicCard(topic,index,total){
   const meta=topicStatusMeta(topic.status);
   const progress=Number(topic.progress)||null;
-  return `<article class="student-topic-card ${meta.className}">
+  return `<article class="student-topic-card ${meta.className} reorder-card" draggable="true" data-topic-id="${topic.id}" data-topic-status="${topic.status||'studying'}">
+    <span class="drag-handle" title="Перетащить" aria-hidden="true">⋮⋮</span>
     <button type="button" class="student-topic-edit" data-edit-student-topic="${topic.id}" aria-label="Редактировать тему" title="Редактировать">•••</button>
+    <div class="mobile-order-controls">${topicMoveButton(topic,'up',index===0)}${topicMoveButton(topic,'down',index===total-1)}</div>
     <div class="student-topic-card-head">
       <h4>${escapeHtml(topic.name||'Без названия')}</h4>
       <span class="student-topic-status ${meta.className}">${meta.label}</span>
@@ -518,10 +597,54 @@ function renderStudentTopicCard(topic){
     ${topic.lastLessonDate?`<div class="student-topic-date">Последнее занятие по теме: ${escapeHtml(formatDateRu(topic.lastLessonDate,false))}</div>`:''}
   </article>`;
 }
+async function persistTopicOrder(studentId,status,orderedIds){
+  const saves=orderedIds.map((id,index)=>{
+    const topic=getStudentTopic(id);
+    return topic?persistStudentTopic({...topic,order:(index+1)*100}):Promise.resolve();
+  });
+  await Promise.all(saves);
+}
+function bindTopicOrdering(studentId){
+  document.querySelectorAll('.student-topic-grid[data-topic-status]').forEach(grid=>{
+    const status=grid.dataset.topicStatus;
+    let dragged=null;
+    grid.querySelectorAll('.student-topic-card').forEach(card=>{
+      card.addEventListener('dragstart',e=>{
+        dragged=card;
+        card.classList.add('is-dragging');
+        e.dataTransfer.effectAllowed='move';
+        e.dataTransfer.setData('text/plain',card.dataset.topicId);
+      });
+      card.addEventListener('dragend',()=>{ card.classList.remove('is-dragging'); dragged=null; });
+      card.addEventListener('dragover',e=>{
+        if(!dragged || dragged===card) return;
+        e.preventDefault();
+        const rect=card.getBoundingClientRect();
+        const before=(e.clientY<rect.top+rect.height/2) || (Math.abs(e.clientY-(rect.top+rect.height/2))<rect.height*.2 && e.clientX<rect.left+rect.width/2);
+        grid.insertBefore(dragged,before?card:card.nextSibling);
+      });
+    });
+    grid.addEventListener('drop',async e=>{
+      if(!dragged) return;
+      e.preventDefault();
+      const ids=[...grid.querySelectorAll('.student-topic-card')].map(el=>el.dataset.topicId);
+      try{ await persistTopicOrder(studentId,status,ids); toast('Порядок тем сохранён'); }
+      catch(error){ console.error(error); toast('Не удалось сохранить порядок'); renderStudentDetail(); }
+    });
+  });
+  document.querySelectorAll('[data-topic-move]').forEach(btn=>btn.addEventListener('click',async()=>{
+    const topic=getStudentTopic(btn.dataset.topicMove); if(!topic) return;
+    const status=topic.status||'studying';
+    const list=sortByOrder(state.studentTopics.filter(t=>t.studentId===studentId && !t.hidden && (t.status||'studying')===status));
+    const idx=list.findIndex(t=>t.id===topic.id), next=btn.dataset.direction==='up'?idx-1:idx+1;
+    if(idx<0 || next<0 || next>=list.length) return;
+    [list[idx],list[next]]=[list[next],list[idx]];
+    try{ await persistTopicOrder(studentId,status,list.map(t=>t.id)); }
+    catch(error){ console.error(error); toast('Не удалось сохранить порядок'); }
+  }));
+}
 function renderStudentTopicMap(studentId){
-  const all=state.studentTopics
-    .filter(t=>t.studentId===studentId && !t.hidden)
-    .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ru',{numeric:true,sensitivity:'base'}));
+  const all=state.studentTopics.filter(t=>t.studentId===studentId && !t.hidden);
   const groups=[
     {status:'review',title:'Нужно повторить',hint:'Темы, к которым стоит вернуться.'},
     {status:'studying',title:'Изучаем',hint:'Темы, которые сейчас в работе.'},
@@ -529,14 +652,14 @@ function renderStudentTopicMap(studentId){
     {status:'studied',title:'Изучено',hint:'Темы, которые уже прошли.'}
   ];
   const body=groups.map(g=>{
-    const topics=all.filter(t=>(t.status||'studying')===g.status);
+    const topics=sortByOrder(all.filter(t=>(t.status||'studying')===g.status));
     if(!topics.length) return '';
     return `<section class="student-topic-group">
       <div class="student-topic-group-head">
         <div><h3>${g.title}</h3><p>${g.hint}</p></div>
         <span>${topics.length}</span>
       </div>
-      <div class="student-topic-grid">${topics.map(renderStudentTopicCard).join('')}</div>
+      <div class="student-topic-grid" data-topic-status="${g.status}">${topics.map((t,i)=>renderStudentTopicCard(t,i,topics.length)).join('')}</div>
     </section>`;
   }).join('');
   return `<div class="student-topics-wrap">
@@ -590,240 +713,226 @@ function materialLevelMeta(level){
   if(level==='advanced') return {label:'Сложный', className:'advanced'};
   return {label:'Средний', className:'medium'};
 }
-function normalizeSearch(value=''){
-  return String(value).trim().toLocaleLowerCase('ru-RU');
-}
+function normalizeSearch(value=''){ return String(value).trim().toLocaleLowerCase('ru-RU'); }
 function populateMaterialClassFilter(){
-  const select=$('materialClassFilter');
-  if(!select) return;
+  const select=$('materialClassFilter'); if(!select) return;
   const previous=select.value || 'all';
-  const classes=[...new Set(state.materials.map(m=>(m.className||'').trim()).filter(Boolean))]
-    .sort((a,b)=>a.localeCompare(b,'ru',{numeric:true,sensitivity:'base'}));
-  select.innerHTML='<option value="all">Все</option>' + classes.map(c=>`<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('');
+  const classes=[...new Set(state.materials.map(m=>(m.className||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru',{numeric:true,sensitivity:'base'}));
+  select.innerHTML='<option value="all">Все</option>'+classes.map(c=>`<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('');
   select.value=classes.includes(previous)?previous:'all';
 }
-function renderMaterials(){
-  const grid=$('materialsGrid');
-  if(!grid) return;
-  populateMaterialClassFilter();
-  const query=normalizeSearch($('materialSearch')?.value||'');
-  const classFilter=$('materialClassFilter')?.value||'all';
-  const levelFilter=$('materialLevelFilter')?.value||'all';
-  const materials=[...state.materials]
-    .filter(m=>!query || normalizeSearch(m.name).includes(query))
-    .filter(m=>classFilter==='all' || (m.className||'')===classFilter)
-    .filter(m=>levelFilter==='all' || (m.level||'medium')===levelFilter)
-    .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ru',{numeric:true,sensitivity:'base'}));
-
-  const count=$('materialsCount');
-  if(count){
-    const total=state.materials.length;
-    count.textContent=total ? `Показано: ${materials.length} из ${total}` : '';
-  }
-  if(!state.materials.length){
-    grid.innerHTML=`<div class="empty-state materials-empty"><strong>Библиотека пока пустая</strong><br><span>Добавь первый конспект или PDF, чтобы больше не искать материалы по папкам.</span></div>`;
-    return;
-  }
-  if(!materials.length){
-    grid.innerHTML=`<div class="empty-state materials-empty"><strong>Ничего не найдено</strong><br><span>Попробуй изменить поиск или сбросить фильтры.</span></div>`;
-    return;
-  }
-  grid.innerHTML='';
-  materials.forEach(m=>{
-    const meta=materialLevelMeta(m.level);
-    const url=safeHttpUrl(m.link);
-    const card=document.createElement('article');
-    card.className='material-card';
-    card.innerHTML=`
-      <div class="material-card-top">
-        <div class="material-title-wrap">
-          <h3>${escapeHtml(m.name||'Без названия')}</h3>
-          <div class="material-tags">
-            ${m.className?`<span class="material-tag class-tag">${escapeHtml(m.className)}</span>`:''}
-            <span class="material-tag level-tag ${meta.className}">${meta.label}</span>
-          </div>
-        </div>
-        <button type="button" class="material-edit-btn" data-edit-material="${m.id}" aria-label="Редактировать материал" title="Редактировать">•••</button>
-      </div>
-      <p class="material-comment ${m.comment?'':'muted-empty'}">${escapeHtml(m.comment||'Комментарий не добавлен')}</p>
-      <div class="material-card-actions">
-        ${url?`<a class="material-open-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Открыть PDF ↗</a>`:'<span class="material-no-link">Ссылка не добавлена</span>'}
-        <button type="button" class="ghost-btn material-edit-text" data-edit-material="${m.id}">Редактировать</button>
-      </div>`;
-    card.querySelectorAll('[data-edit-material]').forEach(btn=>btn.addEventListener('click',()=>openMaterialModal(m.id)));
-    grid.appendChild(card);
-  });
+function populateTrainerClassFilter(){
+  const select=$('trainerClassFilter'); if(!select) return;
+  const previous=select.value || 'all';
+  const classes=[...new Set(state.trainers.map(t=>(t.className||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru',{numeric:true,sensitivity:'base'}));
+  select.innerHTML='<option value="all">Все</option>'+classes.map(c=>`<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('');
+  select.value=classes.includes(previous)?previous:'all';
 }
+function libraryConfig(kind){
+  return kind==='material' ? {
+    items:state.materials, folders:state.materialFolders, active:activeMaterialFolderId,
+    grid:$('materialsGrid'), folderSection:$('materialFoldersSection'), context:$('materialFolderContext'),
+    search:$('materialSearch'), classFilter:$('materialClassFilter'), levelFilter:$('materialLevelFilter'), count:$('materialsCount')
+  } : {
+    items:state.trainers, folders:state.trainerFolders, active:activeTrainerFolderId,
+    grid:$('trainersGrid'), folderSection:$('trainerFoldersSection'), context:$('trainerFolderContext'),
+    search:$('trainerSearch'), classFilter:$('trainerClassFilter'), levelFilter:null, count:$('trainersCount')
+  };
+}
+function isLibraryFiltered(kind){
+  const c=libraryConfig(kind);
+  return !!normalizeSearch(c.search?.value||'') || (c.classFilter?.value||'all')!=='all' || (c.levelFilter?.value||'all')!=='all';
+}
+function setActiveLibraryFolder(kind,id){
+  if(kind==='material') activeMaterialFolderId=id||null; else activeTrainerFolderId=id||null;
+  kind==='material'?renderMaterials():renderTrainers();
+}
+function folderItemCount(kind,folderId){ return libraryConfig(kind).items.filter(i=>folderIdsOf(i).includes(folderId)).length; }
+function renderFolderChoices(kind,selectedIds=[]){
+  const host=$(kind==='material'?'materialFolderChoices':'trainerFolderChoices');
+  if(!host) return;
+  const folders=sortByOrder(libraryConfig(kind).folders);
+  if(!folders.length){ host.innerHTML='<span class="folder-choice-empty">Папок пока нет — можно сохранить без папки.</span>'; return; }
+  const selected=new Set(selectedIds||[]);
+  host.innerHTML=folders.map(f=>`<label class="folder-choice-chip" style="--folder-color:${escapeAttr(f.color||'#e6f8d9')}"><input type="checkbox" value="${f.id}" ${selected.has(f.id)?'checked':''}><span>${escapeHtml(f.name)}</span></label>`).join('');
+}
+function getFolderChoiceIds(kind){
+  const host=$(kind==='material'?'materialFolderChoices':'trainerFolderChoices');
+  return host?[...host.querySelectorAll('input[type="checkbox"]:checked')].map(x=>x.value):[];
+}
+function folderNamesForItem(kind,item){
+  return folderIdsOf(item).map(id=>libraryFolderById(kind,id)?.name).filter(Boolean);
+}
+function folderOrderForNewMembership(kind,item,folderId){
+  const members=libraryConfig(kind).items.filter(x=>folderIdsOf(x).includes(folderId) && x.id!==item?.id);
+  return nextOrder(members,x=>folderOrderValue(x,folderId));
+}
+function withFolderMembership(kind,existing,folderIds){
+  const previous=new Set(folderIdsOf(existing));
+  const orders={...(existing?.folderOrders||{})};
+  folderIds.forEach(folderId=>{ if(!previous.has(folderId) || finiteOrder(orders[folderId])===null) orders[folderId]=folderOrderForNewMembership(kind,existing,folderId); });
+  Object.keys(orders).forEach(id=>{ if(!folderIds.includes(id)) delete orders[id]; });
+  return {folderIds,folderOrders:orders};
+}
+function renderFolderCard(kind,folder,index,total){
+  const card=document.createElement('article');
+  card.className='library-folder-card reorder-card';
+  card.draggable=true; card.dataset.folderId=folder.id;
+  card.style.setProperty('--folder-color',folder.color||'#e6f8d9');
+  card.innerHTML=`<span class="drag-handle" aria-hidden="true">⋮⋮</span>
+    <button type="button" class="folder-edit-btn" data-edit-folder="${folder.id}" aria-label="Редактировать папку">•••</button>
+    <div class="mobile-order-controls"><button type="button" class="order-step-btn" data-folder-move="${folder.id}" data-direction="up" ${index===0?'disabled':''}>↑</button><button type="button" class="order-step-btn" data-folder-move="${folder.id}" data-direction="down" ${index===total-1?'disabled':''}>↓</button></div>
+    <button type="button" class="folder-open-area" data-open-folder="${folder.id}"><span class="folder-icon">⌁</span><strong>${escapeHtml(folder.name)}</strong><small>${folderItemCount(kind,folder.id)} ${kind==='material'?'материалов':'тренажёров'}</small></button>`;
+  card.querySelector('[data-open-folder]').addEventListener('click',()=>setActiveLibraryFolder(kind,folder.id));
+  card.querySelector('[data-edit-folder]').addEventListener('click',()=>openFolderModal(kind,folder.id));
+  card.addEventListener('dragover',e=>{ e.preventDefault(); card.classList.add('folder-drop-target'); });
+  card.addEventListener('dragleave',()=>card.classList.remove('folder-drop-target'));
+  card.addEventListener('drop',async e=>{
+    card.classList.remove('folder-drop-target');
+    const itemId=e.dataTransfer.getData(`application/x-molemix-${kind}`);
+    if(!itemId) return;
+    e.preventDefault(); e.stopPropagation();
+    const item=libraryConfig(kind).items.find(x=>x.id===itemId); if(!item) return;
+    if(folderIdsOf(item).includes(folder.id)) return toast('Этот объект уже есть в папке');
+    const folderIds=[...folderIdsOf(item),folder.id];
+    const next={...item,...withFolderMembership(kind,item,folderIds)};
+    try{ kind==='material'?await persistMaterial(next):await persistTrainer(next); toast('Добавлено в папку'); }
+    catch(error){ console.error(error); toast('Не удалось добавить в папку'); }
+  });
+  return card;
+}
+async function persistFolderOrder(kind,ids){
+  await Promise.all(ids.map((id,i)=>{ const f=libraryFolderById(kind,id); return f?persistLibraryFolder(kind,{...f,order:(i+1)*100}):Promise.resolve(); }));
+}
+function bindFolderOrdering(kind,container){
+  let dragged=null;
+  container.querySelectorAll('.library-folder-card').forEach(card=>{
+    card.addEventListener('dragstart',e=>{ if(e.dataTransfer.types.includes(`application/x-molemix-${kind}`)) return; dragged=card; card.classList.add('is-dragging'); e.dataTransfer.setData('text/plain',card.dataset.folderId); });
+    card.addEventListener('dragend',()=>{card.classList.remove('is-dragging');dragged=null;});
+    card.addEventListener('dragover',e=>{ if(!dragged || dragged===card) return; e.preventDefault(); const r=card.getBoundingClientRect(); container.insertBefore(dragged,e.clientX<r.left+r.width/2?card:card.nextSibling); });
+  });
+  container.addEventListener('drop',async e=>{
+    if(!dragged) return; e.preventDefault();
+    const ids=[...container.querySelectorAll('.library-folder-card')].map(x=>x.dataset.folderId);
+    try{ await persistFolderOrder(kind,ids); toast('Порядок папок сохранён'); }catch(error){console.error(error);toast('Не удалось сохранить порядок');}
+  });
+  container.querySelectorAll('[data-folder-move]').forEach(btn=>btn.addEventListener('click',async e=>{
+    e.stopPropagation(); const folders=sortByOrder(libraryConfig(kind).folders), idx=folders.findIndex(f=>f.id===btn.dataset.folderMove), ni=btn.dataset.direction==='up'?idx-1:idx+1;
+    if(idx<0||ni<0||ni>=folders.length)return; [folders[idx],folders[ni]]=[folders[ni],folders[idx]];
+    try{await persistFolderOrder(kind,folders.map(f=>f.id));}catch(error){console.error(error);toast('Не удалось сохранить порядок');}
+  }));
+}
+function itemOrderGetter(kind,folderId){ return folderId?(item=>folderOrderValue(item,folderId)):(item=>item.order); }
+async function persistItemOrder(kind,folderId,ids){
+  const items=libraryConfig(kind).items;
+  await Promise.all(ids.map((id,i)=>{
+    const item=items.find(x=>x.id===id); if(!item) return Promise.resolve();
+    const next=folderId?{...item,folderOrders:{...(item.folderOrders||{}),[folderId]:(i+1)*100}}:{...item,order:(i+1)*100};
+    return kind==='material'?persistMaterial(next):persistTrainer(next);
+  }));
+}
+function bindItemOrdering(kind,container,folderId,enabled){
+  if(!enabled) return;
+  let dragged=null;
+  container.querySelectorAll('.library-item-card').forEach(card=>{
+    card.addEventListener('dragstart',e=>{ dragged=card; card.classList.add('is-dragging'); e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData(`application/x-molemix-${kind}`,card.dataset.itemId); e.dataTransfer.setData('text/plain',card.dataset.itemId); });
+    card.addEventListener('dragend',()=>{card.classList.remove('is-dragging');dragged=null;});
+    card.addEventListener('dragover',e=>{ if(!dragged||dragged===card)return; e.preventDefault(); const r=card.getBoundingClientRect(); const before=(e.clientY<r.top+r.height/2)||(Math.abs(e.clientY-(r.top+r.height/2))<r.height*.2&&e.clientX<r.left+r.width/2); container.insertBefore(dragged,before?card:card.nextSibling); });
+  });
+  container.addEventListener('drop',async e=>{ if(!dragged)return; e.preventDefault(); const ids=[...container.querySelectorAll('.library-item-card')].map(x=>x.dataset.itemId); try{await persistItemOrder(kind,folderId,ids);toast('Порядок сохранён');}catch(error){console.error(error);toast('Не удалось сохранить порядок');} });
+  container.querySelectorAll('[data-item-move]').forEach(btn=>btn.addEventListener('click',async()=>{
+    const config=libraryConfig(kind), getter=itemOrderGetter(kind,folderId);
+    let list=config.items.filter(item=>folderId?folderIdsOf(item).includes(folderId):folderIdsOf(item).length===0);
+    list=sortByOrder(list,getter); const idx=list.findIndex(x=>x.id===btn.dataset.itemMove), ni=btn.dataset.direction==='up'?idx-1:idx+1;
+    if(idx<0||ni<0||ni>=list.length)return; [list[idx],list[ni]]=[list[ni],list[idx]];
+    try{await persistItemOrder(kind,folderId,list.map(x=>x.id));}catch(error){console.error(error);toast('Не удалось сохранить порядок');}
+  }));
+}
+function renderLibraryItemCard(kind,item,index,total,folderId,showFolderNames=false,reorderEnabled=true){
+  const isMaterial=kind==='material', url=safeHttpUrl(item.link), meta=isMaterial?materialLevelMeta(item.level):null;
+  const card=document.createElement('article');
+  card.className=(isMaterial?'material-card':'trainer-card')+' library-item-card reorder-card';
+  card.draggable=!!reorderEnabled; card.dataset.itemId=item.id;
+  const folders=showFolderNames?folderNamesForItem(kind,item):[];
+  card.innerHTML=`${reorderEnabled?'<span class="drag-handle" aria-hidden="true">⋮⋮</span>':''}
+    ${reorderEnabled?`<div class="mobile-order-controls"><button type="button" class="order-step-btn" data-item-move="${item.id}" data-direction="up" ${index===0?'disabled':''}>↑</button><button type="button" class="order-step-btn" data-item-move="${item.id}" data-direction="down" ${index===total-1?'disabled':''}>↓</button></div>`:''}
+    <div class="${isMaterial?'material':'trainer'}-card-top"><div class="${isMaterial?'material':'trainer'}-title-wrap"><h3>${escapeHtml(item.name||'Без названия')}</h3><div class="${isMaterial?'material':'trainer'}-tags">${item.className?`<span class="${isMaterial?'material':'trainer'}-tag class-tag">${escapeHtml(item.className)}</span>`:''}${isMaterial?`<span class="material-tag level-tag ${meta.className}">${meta.label}</span>`:''}</div></div><button type="button" class="${isMaterial?'material':'trainer'}-edit-btn" data-edit-item="${item.id}" aria-label="Редактировать">•••</button></div>
+    ${folders.length?`<div class="item-folder-note">В папках: ${folders.map(escapeHtml).join(', ')}</div>`:''}
+    ${isMaterial?`<p class="material-comment ${item.comment?'':'muted-empty'}">${escapeHtml(item.comment||'Комментарий не добавлен')}</p>`:''}
+    <div class="${isMaterial?'material':'trainer'}-card-actions">${url?`<a class="${isMaterial?'material':'trainer'}-open-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${isMaterial?'Открыть PDF ↗':'Открыть тренажёр ↗'}</a>`:`<span class="${isMaterial?'material':'trainer'}-no-link">Ссылка не добавлена</span>`}<button type="button" class="ghost-btn ${isMaterial?'material':'trainer'}-edit-text" data-edit-item="${item.id}">Редактировать</button></div>`;
+  card.querySelectorAll('[data-edit-item]').forEach(btn=>btn.addEventListener('click',()=>isMaterial?openMaterialModal(item.id):openTrainerModal(item.id)));
+  return card;
+}
+function renderLibrary(kind){
+  const c=libraryConfig(kind); if(!c.grid) return;
+  kind==='material'?populateMaterialClassFilter():populateTrainerClassFilter();
+  const query=normalizeSearch(c.search?.value||''), classFilter=c.classFilter?.value||'all', levelFilter=c.levelFilter?.value||'all', filtered=!!query||classFilter!=='all'||levelFilter!=='all';
+  const activeFolder=libraryFolderById(kind,c.active);
+  if(c.active && !activeFolder) setActiveLibraryFolder(kind,null);
+  const allMatching=c.items.filter(item=>(!query||normalizeSearch(item.name).includes(query))&&(classFilter==='all'||(item.className||'')===classFilter)&&(levelFilter==='all'||!c.levelFilter||(item.level||'medium')===levelFilter));
+  c.context.hidden=!activeFolder || filtered;
+  if(activeFolder && !filtered){ c.context.innerHTML=`<button type="button" class="back-btn folder-back-btn">← Все папки</button><div class="folder-context-title" style="--folder-color:${escapeAttr(activeFolder.color||'#e6f8d9')}"><span></span><div><strong>${escapeHtml(activeFolder.name)}</strong><small>${folderItemCount(kind,activeFolder.id)} ${kind==='material'?'материалов':'тренажёров'}</small></div></div>`; c.context.querySelector('.folder-back-btn').addEventListener('click',()=>setActiveLibraryFolder(kind,null)); }
+  c.folderSection.innerHTML='';
+  if(!filtered && !activeFolder){
+    const folders=sortByOrder(c.folders); if(folders.length){ const title=document.createElement('div'); title.className='library-subheading'; title.innerHTML='<strong>Папки</strong><span>Можно перетаскивать в своём порядке</span>'; c.folderSection.appendChild(title); const grid=document.createElement('div'); grid.className='library-folders-grid'; folders.forEach((f,i)=>grid.appendChild(renderFolderCard(kind,f,i,folders.length))); c.folderSection.appendChild(grid); bindFolderOrdering(kind,grid); }
+  }
+  let items;
+  if(filtered) items=allMatching;
+  else if(activeFolder) items=c.items.filter(item=>folderIdsOf(item).includes(activeFolder.id));
+  else items=c.items.filter(item=>folderIdsOf(item).length===0);
+  const getter=itemOrderGetter(kind,activeFolder?.id||null);
+  items=sortByOrder(items,getter);
+  if(c.count){ const total=c.items.length; c.count.textContent=total?(filtered?`Найдено: ${items.length} из ${total}`:(activeFolder?`${items.length} в папке «${activeFolder.name}»`:`Без папки: ${items.length} · Всего: ${total}`)):''; }
+  c.grid.innerHTML='';
+  if(!c.items.length){ c.grid.innerHTML=`<div class="empty-state ${kind==='material'?'materials':'trainers'}-empty"><strong>${kind==='material'?'Библиотека пока пустая':'Тренажёров пока нет'}</strong><br><span>${kind==='material'?'Добавь первый конспект или PDF.':'Добавь первый тренажёр — его ссылка всегда будет под рукой.'}</span></div>`; return; }
+  if(!items.length){ c.grid.innerHTML=`<div class="empty-state ${kind==='material'?'materials':'trainers'}-empty"><strong>${filtered?'Ничего не найдено':activeFolder?'В этой папке пока пусто':'Все записи разложены по папкам'}</strong><br><span>${filtered?'Попробуй изменить поиск или сбросить фильтры.':activeFolder?'Добавь записи через «Редактировать» → Папки.':'Создай новую запись без папки или открой нужную папку.'}</span></div>`; return; }
+  items.forEach((item,i)=>c.grid.appendChild(renderLibraryItemCard(kind,item,i,items.length,activeFolder?.id||null,filtered,!filtered)));
+  bindItemOrdering(kind,c.grid,activeFolder?.id||null,!filtered);
+}
+function renderMaterials(){ renderLibrary('material'); }
+function renderTrainers(){ renderLibrary('trainer'); }
 
-$('materialSearch').addEventListener('input',renderMaterials);
-$('materialClassFilter').addEventListener('change',renderMaterials);
-$('materialLevelFilter').addEventListener('change',renderMaterials);
-$('clearMaterialFilters').addEventListener('click',()=>{
-  $('materialSearch').value='';
-  $('materialClassFilter').value='all';
-  $('materialLevelFilter').value='all';
-  renderMaterials();
-});
+$('materialSearch').addEventListener('input',()=>{ activeMaterialFolderId=null; renderMaterials(); });
+$('materialClassFilter').addEventListener('change',()=>{ activeMaterialFolderId=null; renderMaterials(); });
+$('materialLevelFilter').addEventListener('change',()=>{ activeMaterialFolderId=null; renderMaterials(); });
+$('clearMaterialFilters').addEventListener('click',()=>{ activeMaterialFolderId=null; $('materialSearch').value=''; $('materialClassFilter').value='all'; $('materialLevelFilter').value='all'; renderMaterials(); });
+$('trainerSearch').addEventListener('input',()=>{ activeTrainerFolderId=null; renderTrainers(); });
+$('trainerClassFilter').addEventListener('change',()=>{ activeTrainerFolderId=null; renderTrainers(); });
+$('clearTrainerFilters').addEventListener('click',()=>{ activeTrainerFolderId=null; $('trainerSearch').value=''; $('trainerClassFilter').value='all'; renderTrainers(); });
 $('addMaterialBtn').addEventListener('click',()=>openMaterialModal());
+$('addTrainerBtn').addEventListener('click',()=>openTrainerModal());
+$('addMaterialFolderBtn').addEventListener('click',()=>openFolderModal('material'));
+$('addTrainerFolderBtn').addEventListener('click',()=>openFolderModal('trainer'));
 function openMaterialModal(id=null){
   const m=id?state.materials.find(x=>x.id===id):null;
-  $('materialModalTitle').textContent=m?'Редактировать материал':'Новый материал';
-  $('materialId').value=m?.id||'';
-  $('materialName').value=m?.name||'';
-  $('materialClass').value=m?.className||'';
-  $('materialLevel').value=m?.level||'medium';
-  $('materialLink').value=m?.link||'';
-  $('materialComment').value=m?.comment||'';
-  $('deleteMaterialBtn').classList.toggle('hidden',!m);
-  $('materialModalBackdrop').hidden=false;
-  setTimeout(()=>$('materialName').focus(),0);
+  $('materialModalTitle').textContent=m?'Редактировать материал':'Новый материал'; $('materialId').value=m?.id||''; $('materialName').value=m?.name||''; $('materialClass').value=m?.className||''; $('materialLevel').value=m?.level||'medium'; $('materialLink').value=m?.link||''; $('materialComment').value=m?.comment||''; renderFolderChoices('material',folderIdsOf(m)); $('deleteMaterialBtn').classList.toggle('hidden',!m); $('materialModalBackdrop').hidden=false; setTimeout(()=>$('materialName').focus(),0);
 }
-$('materialForm').addEventListener('submit',async(e)=>{
-  e.preventDefault();
-  const id=$('materialId').value || uid('material');
-  const existing=state.materials.find(x=>x.id===id);
-  const link=$('materialLink').value.trim();
-  if(link && !safeHttpUrl(link)) return toast('Ссылка должна начинаться с http:// или https://');
-  const material={
-    ...(existing||{}), id,
-    name:$('materialName').value.trim(),
-    className:$('materialClass').value.trim(),
-    level:$('materialLevel').value,
-    link,
-    comment:$('materialComment').value.trim(),
-    createdAt:existing?.createdAt||new Date().toISOString()
-  };
-  if(!material.name) return toast('Напиши название материала');
-  try{
-    await persistMaterial(material);
-    closeModal('material');
-    toast(existing?'Материал обновлён':'Материал добавлен в библиотеку');
-  }catch(error){console.error(error);toast('Не удалось сохранить материал');}
+$('materialForm').addEventListener('submit',async e=>{
+  e.preventDefault(); const id=$('materialId').value||uid('material'), existing=state.materials.find(x=>x.id===id), link=$('materialLink').value.trim(); if(link&&!safeHttpUrl(link))return toast('Ссылка должна начинаться с http:// или https://');
+  const membership=withFolderMembership('material',existing,getFolderChoiceIds('material'));
+  const material={...(existing||{}),id,name:$('materialName').value.trim(),className:$('materialClass').value.trim(),level:$('materialLevel').value,link,comment:$('materialComment').value.trim(),...membership,order:existing?.order??nextOrder(state.materials.filter(x=>folderIdsOf(x).length===0)),createdAt:existing?.createdAt||new Date().toISOString()}; if(!material.name)return toast('Напиши название материала');
+  try{await persistMaterial(material);closeModal('material');toast(existing?'Материал обновлён':'Материал добавлен в библиотеку');}catch(error){console.error(error);toast('Не удалось сохранить материал');}
 });
-$('deleteMaterialBtn').addEventListener('click',async()=>{
-  const id=$('materialId').value;
-  const m=state.materials.find(x=>x.id===id);
-  if(!id||!m) return;
-  if(confirm(`Удалить материал «${m.name}» из библиотеки? Сам PDF по ссылке удалён не будет.`)){
-    try{
-      await deleteDoc(userDoc('materials',id));
-      closeModal('material');
-      toast('Материал удалён из библиотеки');
-    }catch(error){console.error(error);toast('Не удалось удалить материал');}
-  }
-});
-
-
-function populateTrainerClassFilter(){
-  const select=$('trainerClassFilter');
-  if(!select) return;
-  const previous=select.value || 'all';
-  const classes=[...new Set(state.trainers.map(t=>(t.className||'').trim()).filter(Boolean))]
-    .sort((a,b)=>a.localeCompare(b,'ru',{numeric:true,sensitivity:'base'}));
-  select.innerHTML='<option value="all">Все</option>' + classes.map(c=>`<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('');
-  select.value=classes.includes(previous)?previous:'all';
-}
-function renderTrainers(){
-  const grid=$('trainersGrid');
-  if(!grid) return;
-  populateTrainerClassFilter();
-  const query=normalizeSearch($('trainerSearch')?.value||'');
-  const classFilter=$('trainerClassFilter')?.value||'all';
-  const trainers=[...state.trainers]
-    .filter(t=>!query || normalizeSearch(t.name).includes(query))
-    .filter(t=>classFilter==='all' || (t.className||'')===classFilter)
-    .sort((a,b)=>(a.name||'').localeCompare(b.name||'','ru',{numeric:true,sensitivity:'base'}));
-
-  const count=$('trainersCount');
-  if(count){
-    const total=state.trainers.length;
-    count.textContent=total ? `Показано: ${trainers.length} из ${total}` : '';
-  }
-  if(!state.trainers.length){
-    grid.innerHTML=`<div class="empty-state trainers-empty"><strong>Тренажёров пока нет</strong><br><span>Добавь первый тренажёр — его ссылка всегда будет под рукой.</span></div>`;
-    return;
-  }
-  if(!trainers.length){
-    grid.innerHTML=`<div class="empty-state trainers-empty"><strong>Ничего не найдено</strong><br><span>Попробуй изменить поиск или сбросить фильтр.</span></div>`;
-    return;
-  }
-  grid.innerHTML='';
-  trainers.forEach(t=>{
-    const url=safeHttpUrl(t.link);
-    const card=document.createElement('article');
-    card.className='trainer-card';
-    card.innerHTML=`
-      <div class="trainer-card-top">
-        <div class="trainer-title-wrap">
-          <h3>${escapeHtml(t.name||'Без названия')}</h3>
-          <div class="trainer-tags">
-            ${t.className?`<span class="trainer-tag class-tag">${escapeHtml(t.className)}</span>`:''}
-          </div>
-        </div>
-        <button type="button" class="trainer-edit-btn" data-edit-trainer="${t.id}" aria-label="Редактировать тренажёр" title="Редактировать">•••</button>
-      </div>
-      <div class="trainer-card-actions">
-        ${url?`<a class="trainer-open-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Открыть тренажёр ↗</a>`:'<span class="trainer-no-link">Ссылка не добавлена</span>'}
-        <button type="button" class="ghost-btn trainer-edit-text" data-edit-trainer="${t.id}">Редактировать</button>
-      </div>`;
-    card.querySelectorAll('[data-edit-trainer]').forEach(btn=>btn.addEventListener('click',()=>openTrainerModal(t.id)));
-    grid.appendChild(card);
-  });
-}
-
-$('trainerSearch').addEventListener('input',renderTrainers);
-$('trainerClassFilter').addEventListener('change',renderTrainers);
-$('clearTrainerFilters').addEventListener('click',()=>{
-  $('trainerSearch').value='';
-  $('trainerClassFilter').value='all';
-  renderTrainers();
-});
-$('addTrainerBtn').addEventListener('click',()=>openTrainerModal());
+$('deleteMaterialBtn').addEventListener('click',async()=>{ const id=$('materialId').value,m=state.materials.find(x=>x.id===id); if(!id||!m)return; if(confirm(`Удалить материал «${m.name}» из библиотеки? Сам PDF по ссылке удалён не будет.`)){try{await deleteDoc(userDoc('materials',id));closeModal('material');toast('Материал удалён из библиотеки');}catch(error){console.error(error);toast('Не удалось удалить материал');}} });
 function openTrainerModal(id=null){
-  const t=id?state.trainers.find(x=>x.id===id):null;
-  $('trainerModalTitle').textContent=t?'Редактировать тренажёр':'Новый тренажёр';
-  $('trainerId').value=t?.id||'';
-  $('trainerName').value=t?.name||'';
-  $('trainerClass').value=t?.className||'';
-  $('trainerLink').value=t?.link||'';
-  $('deleteTrainerBtn').classList.toggle('hidden',!t);
-  $('trainerModalBackdrop').hidden=false;
-  setTimeout(()=>$('trainerName').focus(),0);
+  const t=id?state.trainers.find(x=>x.id===id):null; $('trainerModalTitle').textContent=t?'Редактировать тренажёр':'Новый тренажёр'; $('trainerId').value=t?.id||''; $('trainerName').value=t?.name||''; $('trainerClass').value=t?.className||''; $('trainerLink').value=t?.link||''; renderFolderChoices('trainer',folderIdsOf(t)); $('deleteTrainerBtn').classList.toggle('hidden',!t); $('trainerModalBackdrop').hidden=false; setTimeout(()=>$('trainerName').focus(),0);
 }
-$('trainerForm').addEventListener('submit',async(e)=>{
-  e.preventDefault();
-  const id=$('trainerId').value || uid('trainer');
-  const existing=state.trainers.find(x=>x.id===id);
-  const link=$('trainerLink').value.trim();
-  if(!safeHttpUrl(link)) return toast('Вставь корректную ссылку http:// или https://');
-  const trainer={
-    ...(existing||{}), id,
-    name:$('trainerName').value.trim(),
-    className:$('trainerClass').value.trim(),
-    link,
-    createdAt:existing?.createdAt||new Date().toISOString()
-  };
-  if(!trainer.name) return toast('Напиши название тренажёра');
-  if(!trainer.className) return toast('Укажи класс');
-  try{
-    await persistTrainer(trainer);
-    closeModal('trainer');
-    toast(existing?'Тренажёр обновлён':'Тренажёр добавлен');
-  }catch(error){console.error(error);toast('Не удалось сохранить тренажёр');}
+$('trainerForm').addEventListener('submit',async e=>{
+  e.preventDefault(); const id=$('trainerId').value||uid('trainer'),existing=state.trainers.find(x=>x.id===id),link=$('trainerLink').value.trim(); if(!safeHttpUrl(link))return toast('Вставь корректную ссылку http:// или https://'); const membership=withFolderMembership('trainer',existing,getFolderChoiceIds('trainer'));
+  const trainer={...(existing||{}),id,name:$('trainerName').value.trim(),className:$('trainerClass').value.trim(),link,...membership,order:existing?.order??nextOrder(state.trainers.filter(x=>folderIdsOf(x).length===0)),createdAt:existing?.createdAt||new Date().toISOString()}; if(!trainer.name)return toast('Напиши название тренажёра'); if(!trainer.className)return toast('Укажи класс'); try{await persistTrainer(trainer);closeModal('trainer');toast(existing?'Тренажёр обновлён':'Тренажёр добавлен');}catch(error){console.error(error);toast('Не удалось сохранить тренажёр');}
 });
-$('deleteTrainerBtn').addEventListener('click',async()=>{
-  const id=$('trainerId').value;
-  const t=state.trainers.find(x=>x.id===id);
-  if(!id||!t) return;
-  if(confirm(`Удалить тренажёр «${t.name}» из списка? Сам сайт удалён не будет.`)){
-    try{
-      await deleteDoc(userDoc('trainers',id));
-      closeModal('trainer');
-      toast('Тренажёр удалён из списка');
-    }catch(error){console.error(error);toast('Не удалось удалить тренажёр');}
-  }
+$('deleteTrainerBtn').addEventListener('click',async()=>{ const id=$('trainerId').value,t=state.trainers.find(x=>x.id===id); if(!id||!t)return; if(confirm(`Удалить тренажёр «${t.name}» из списка? Сам сайт удалён не будет.`)){try{await deleteDoc(userDoc('trainers',id));closeModal('trainer');toast('Тренажёр удалён из списка');}catch(error){console.error(error);toast('Не удалось удалить тренажёр');}} });
+function openFolderModal(kind,id=null){
+  const folder=id?libraryFolderById(kind,id):null; $('folderKind').value=kind; $('folderId').value=folder?.id||''; $('folderModalTitle').textContent=folder?'Редактировать папку':'Новая папка'; $('folderName').value=folder?.name||''; $('folderColor').value=folder?.color||FOLDER_COLORS[0]; renderFolderColorPalette($('folderColor').value); $('deleteFolderBtn').classList.toggle('hidden',!folder); $('folderModalBackdrop').hidden=false; setTimeout(()=>$('folderName').focus(),0);
+}
+$('folderForm').addEventListener('submit',async e=>{
+  e.preventDefault(); const kind=$('folderKind').value,id=$('folderId').value||uid(`${kind}Folder`),existing=libraryFolderById(kind,id),folders=libraryConfig(kind).folders; const folder={...(existing||{}),id,name:$('folderName').value.trim(),color:$('folderColor').value,order:existing?.order??nextOrder(folders),createdAt:existing?.createdAt||new Date().toISOString()}; if(!folder.name)return toast('Напиши название папки'); try{await persistLibraryFolder(kind,folder);closeModal('folder');toast(existing?'Папка обновлена':'Папка создана');}catch(error){console.error(error);toast('Не удалось сохранить папку');}
 });
-
+$('deleteFolderBtn').addEventListener('click',async()=>{
+  const kind=$('folderKind').value,id=$('folderId').value,folder=libraryFolderById(kind,id); if(!folder)return; if(!confirm(`Удалить папку «${folder.name}»? ${kind==='material'?'Материалы':'Тренажёры'} внутри останутся в библиотеке.`))return;
+  const config=libraryConfig(kind), affected=config.items.filter(item=>folderIdsOf(item).includes(id));
+  try{await Promise.all(affected.map(item=>{const folderIds=folderIdsOf(item).filter(x=>x!==id),folderOrders={...(item.folderOrders||{})};delete folderOrders[id];const next={...item,folderIds,folderOrders};return kind==='material'?persistMaterial(next):persistTrainer(next);})); await deleteDoc(userDoc(kind==='material'?'materialFolders':'trainerFolders',id)); if(kind==='material')activeMaterialFolderId=null;else activeTrainerFolderId=null;closeModal('folder');toast('Папка удалена, записи сохранены');}catch(error){console.error(error);toast('Не удалось удалить папку');}
+});
 
 function plannerTodayKey(){ return toISODate(new Date()); }
 function compareTaskDates(a,b){
@@ -1021,12 +1130,14 @@ $('studentTopicForm').addEventListener('submit',async(e)=>{
   const duplicate=state.studentTopics.find(t=>t.studentId===activeStudentId && t.id!==id && normalizeTopicName(t.name)===normalizeTopicName(name));
   if(duplicate && !duplicate.hidden) return toast('Такая тема уже есть в карте ученика');
   if(duplicate?.hidden && !existing){ id=duplicate.id; existing=duplicate; }
+  const targetStatus=$('studentTopicStatus').value;
   const topic={
     ...(existing||{}),
     id,
     studentId:activeStudentId,
     name,
-    status:$('studentTopicStatus').value,
+    status:targetStatus,
+    order:(!existing || (existing.status||'studying')!==targetStatus) ? nextOrder(state.studentTopics.filter(t=>t.studentId===activeStudentId && !t.hidden && (t.status||'studying')===targetStatus)) : (existing.order ?? nextOrder(state.studentTopics.filter(t=>t.studentId===activeStudentId && !t.hidden && (t.status||'studying')===targetStatus))),
     progress:Number($('studentTopicProgress').value)||null,
     comment:$('studentTopicComment').value.trim(),
     hidden:false,
@@ -1156,9 +1267,9 @@ $('deleteLessonBtn').addEventListener('click',async()=>{
 });
 
 document.querySelectorAll('[data-close]').forEach(btn=>btn.addEventListener('click',()=>closeModal(btn.dataset.close)));
-[$('lessonModalBackdrop'),$('studentModalBackdrop'),$('studentTopicModalBackdrop'),$('materialModalBackdrop'),$('trainerModalBackdrop'),$('taskModalBackdrop')].forEach(backdrop=>backdrop.addEventListener('click',(e)=>{if(e.target===backdrop) backdrop.hidden=true;}));
+[$('lessonModalBackdrop'),$('studentModalBackdrop'),$('studentTopicModalBackdrop'),$('materialModalBackdrop'),$('trainerModalBackdrop'),$('folderModalBackdrop'),$('taskModalBackdrop')].forEach(backdrop=>backdrop.addEventListener('click',(e)=>{if(e.target===backdrop) backdrop.hidden=true;}));
 function closeModal(type){
-  const ids={lesson:'lessonModalBackdrop',student:'studentModalBackdrop',studentTopic:'studentTopicModalBackdrop',material:'materialModalBackdrop',trainer:'trainerModalBackdrop',task:'taskModalBackdrop'};
+  const ids={lesson:'lessonModalBackdrop',student:'studentModalBackdrop',studentTopic:'studentTopicModalBackdrop',material:'materialModalBackdrop',trainer:'trainerModalBackdrop',folder:'folderModalBackdrop',task:'taskModalBackdrop'};
   if(ids[type]) $(ids[type]).hidden=true;
 }
 
