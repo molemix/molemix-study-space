@@ -429,9 +429,8 @@ function renderCalendar(){
 
   const key = monthKey(currentDate);
   const monthLessons = state.lessons.filter(l=>l.date?.startsWith(key));
-  const todayIso = toISODate(new Date());
-  const earned = monthLessons.filter(l=>l.conducted && !l.cancelled).reduce((s,l)=>s+Number(l.price||0),0);
-  const future = monthLessons.filter(l=>!l.conducted && !l.cancelled && l.date >= todayIso).reduce((s,l)=>s+Number(l.price||0),0);
+  const earned = monthLessons.filter(l=>l.paid && !l.cancelled).reduce((s,l)=>s+Number(l.price||0),0);
+  const future = monthLessons.filter(l=>!l.paid && !l.cancelled).reduce((s,l)=>s+Number(l.price||0),0);
   const conducted = monthLessons.filter(l=>l.conducted && !l.cancelled).length;
   $('paidTotal').textContent = money(earned);
   $('unpaidTotal').textContent = money(future);
