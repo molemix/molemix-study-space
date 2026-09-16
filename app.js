@@ -1,4 +1,4 @@
-// MoleMix build 2026-09-08.1 — folders, manual order, acid-green background
+// MoleMix build 2026-09-15.1 — personal calendar, categories and monthly expenses
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import {
   getAuth,
@@ -31,9 +31,10 @@ const db = getFirestore(firebaseApp);
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-const state = { students: [], lessons: [], studentTopics: [], materials: [], materialFolders: [], trainers: [], trainerFolders: [], tasks: [] };
+const state = { students: [], lessons: [], studentTopics: [], materials: [], materialFolders: [], trainers: [], trainerFolders: [], tasks: [], personalEvents: [], personalCategories: [] };
 let currentDate = new Date();
 currentDate.setDate(1);
+let currentCalendarMode = 'study';
 let activeStudentId = null;
 let activeStudentTab = 'lessons';
 let activeMaterialFolderId = null;
@@ -47,6 +48,8 @@ let stopMaterialFolders = null;
 let stopTrainers = null;
 let stopTrainerFolders = null;
 let stopTasks = null;
+let stopPersonalEvents = null;
+let stopPersonalCategories = null;
 let lessonsSyncReady = false;
 let studentTopicsSyncReady = false;
 let initialTopicMigrationDone = false;
@@ -68,6 +71,13 @@ const STUDENT_COLORS = [
   '#c7e3d0','#b4d9c1','#9fcdae','#d6ead8','#b9dfd7',
   '#f2d9a6','#efd09a','#f5e1b9','#edc9a8','#f3d2bd',
   '#d9c6ba','#cdb7aa','#e1d2c8','#c9b8c8','#d9c6df'
+];
+
+const PERSONAL_CATEGORY_COLORS = [
+  '#f2a7bd','#e8a5a5','#f6b49a','#f3c27b','#f2dd7d','#c8e27a',
+  '#b9d8a6','#a8ddb5','#83d5c7','#7fc6cc','#aed7e8','#8ec9e8',
+  '#8bafe0','#9ea6e8','#b6a2e6','#c79ddd','#d99ac7','#d6a8b8',
+  '#d9c4a5','#e5b88a','#afc9a7','#a7c4d8','#b2b6d4','#c8b3a5'
 ];
 function renderStudentColorPalette(selected){
   const palette=$('studentColorPalette');
@@ -207,6 +217,16 @@ async function persistTask(task){
   const {id,...data}=task;
   await setDoc(userDoc('tasks',id), {...data, updatedAt:new Date().toISOString()});
 }
+async function persistPersonalEvent(event){
+  const {id,...data}=event;
+  await setDoc(userDoc('personalEvents',id), {...data, updatedAt:new Date().toISOString()});
+}
+async function persistPersonalCategory(category){
+  const {id,...data}=category;
+  await setDoc(userDoc('personalCategories',id), {...data, updatedAt:new Date().toISOString()});
+}
+function getPersonalEvent(id){ return state.personalEvents.find(e=>e.id===id); }
+function getPersonalCategory(id){ return state.personalCategories.find(c=>c.id===id); }
 
 function normalizeTopicName(value=''){
   return String(value).trim().replace(/\s+/g,' ').toLocaleLowerCase('ru-RU');
@@ -343,6 +363,19 @@ function startCloudSync(user){
     state.tasks = snapshot.docs.map(d=>({id:d.id,...d.data()}));
     renderAll();
   }, handleFirestoreError);
+  stopPersonalEvents = onSnapshot(userCollection('personalEvents'), snapshot=>{
+    state.personalEvents = snapshot.docs.map(d=>({id:d.id,...d.data()}));
+    renderAll();
+  }, handleFirestoreError);
+  stopPersonalCategories = onSnapshot(userCollection('personalCategories'), snapshot=>{
+    state.personalCategories = snapshot.docs.map(d=>({id:d.id,...d.data()}));
+    renderAll();
+    if(!$('personalCategoryModalBackdrop').hidden) renderPersonalCategoryList();
+    if(!$('personalEventModalBackdrop').hidden){
+      const selected=$('personalEventCategory').value;
+      populatePersonalCategorySelect(selected);
+    }
+  }, handleFirestoreError);
 }
 function stopCloudSync(){
   if(stopStudents){stopStudents();stopStudents=null;}
@@ -353,6 +386,8 @@ function stopCloudSync(){
   if(stopTrainers){stopTrainers();stopTrainers=null;}
   if(stopTrainerFolders){stopTrainerFolders();stopTrainerFolders=null;}
   if(stopTasks){stopTasks();stopTasks=null;}
+  if(stopPersonalEvents){stopPersonalEvents();stopPersonalEvents=null;}
+  if(stopPersonalCategories){stopPersonalCategories();stopPersonalCategories=null;}
 }
 function handleFirestoreError(error){
   console.error(error);
@@ -392,7 +427,7 @@ onAuthStateChanged(auth,user=>{
     startCloudSync(user);
   }else{
     stopCloudSync();
-    state.students=[]; state.lessons=[]; state.studentTopics=[]; state.materials=[]; state.materialFolders=[]; state.trainers=[]; state.trainerFolders=[]; state.tasks=[]; activeStudentId=null; activeStudentTab='lessons'; activeMaterialFolderId=null; activeTrainerFolderId=null;
+    state.students=[]; state.lessons=[]; state.studentTopics=[]; state.materials=[]; state.materialFolders=[]; state.trainers=[]; state.trainerFolders=[]; state.tasks=[]; state.personalEvents=[]; state.personalCategories=[]; activeStudentId=null; activeStudentTab='lessons'; activeMaterialFolderId=null; activeTrainerFolderId=null;
     $('appShell').hidden=true;
     $('authGate').hidden=false;
     $('authMessage').textContent='Войди в свой Google-аккаунт, чтобы загрузить учеников и занятия.';
@@ -422,19 +457,39 @@ $('backToStudents').addEventListener('click',()=>switchView('students'));
 $('prevMonth').addEventListener('click',()=>{ currentDate.setMonth(currentDate.getMonth()-1); renderCalendar(); });
 $('nextMonth').addEventListener('click',()=>{ currentDate.setMonth(currentDate.getMonth()+1); renderCalendar(); });
 $('todayBtn').addEventListener('click',()=>{ currentDate = new Date(); currentDate.setDate(1); renderCalendar(); });
+$('studyCalendarMode').addEventListener('click',()=>{ currentCalendarMode='study'; renderCalendar(); });
+$('personalCalendarMode').addEventListener('click',()=>{ currentCalendarMode='personal'; renderCalendar(); });
+$('managePersonalCategoriesBtn').addEventListener('click',()=>openPersonalCategoryManager());
+$('newPersonalCategoryFromEventBtn').addEventListener('click',()=>openPersonalCategoryManager());
+$('addPersonalEventBtn').addEventListener('click',()=>{
+  const now=new Date();
+  const sameMonth=now.getFullYear()===currentDate.getFullYear() && now.getMonth()===currentDate.getMonth();
+  const d=new Date(currentDate.getFullYear(),currentDate.getMonth(),sameMonth?now.getDate():1);
+  openPersonalEventModal(null,toISODate(d));
+});
 
 function renderCalendar(){
   const title = currentDate.toLocaleDateString('ru-RU',{month:'long',year:'numeric'});
   $('monthTitle').textContent = title.charAt(0).toUpperCase()+title.slice(1);
+  const personal=currentCalendarMode==='personal';
+  $('studyCalendarMode').classList.toggle('active',!personal);
+  $('personalCalendarMode').classList.toggle('active',personal);
+  $('calendarEyebrow').textContent=personal?'Личный календарь':'Планер занятий';
+  $('studySummaryGrid').hidden=personal;
+  $('personalExpenses').hidden=!personal;
+  $('personalCalendarActions').hidden=!personal;
 
   const key = monthKey(currentDate);
-  const monthLessons = state.lessons.filter(l=>l.date?.startsWith(key));
-  const earned = monthLessons.filter(l=>l.paid && !l.cancelled).reduce((s,l)=>s+Number(l.price||0),0);
-  const future = monthLessons.filter(l=>!l.paid && !l.cancelled).reduce((s,l)=>s+Number(l.price||0),0);
-  const conducted = monthLessons.filter(l=>l.conducted && !l.cancelled).length;
-  $('paidTotal').textContent = money(earned);
-  $('unpaidTotal').textContent = money(future);
-  $('conductedCount').textContent = conducted;
+  if(personal) renderPersonalExpenses(key,title);
+  else{
+    const monthLessons = state.lessons.filter(l=>l.date?.startsWith(key));
+    const earned = monthLessons.filter(l=>l.paid && !l.cancelled).reduce((s,l)=>s+Number(l.price||0),0);
+    const future = monthLessons.filter(l=>!l.paid && !l.cancelled).reduce((s,l)=>s+Number(l.price||0),0);
+    const conducted = monthLessons.filter(l=>l.conducted && !l.cancelled).length;
+    $('paidTotal').textContent = money(earned);
+    $('unpaidTotal').textContent = money(future);
+    $('conductedCount').textContent = conducted;
+  }
 
   const grid = $('calendarGrid');
   grid.innerHTML='';
@@ -450,15 +505,31 @@ function renderCalendar(){
     d.setDate(start.getDate()+i);
     const iso = toISODate(d);
     const cell = document.createElement('div');
-    cell.className='day-cell';
+    cell.className='day-cell'+(personal?' personal-day-cell':'');
     if(d.getMonth()!==month) cell.classList.add('outside');
     if(d.getTime()===today.getTime()) cell.classList.add('today');
-    cell.innerHTML=`<div class="day-head"><span class="day-number">${d.getDate()}</span><button class="add-lesson-mini" title="Добавить занятие">+</button></div><div class="lessons-list"></div>`;
-    cell.querySelector('.add-lesson-mini').addEventListener('click',(e)=>{e.stopPropagation();openLessonModal(null,iso);});
-    cell.addEventListener('dblclick',()=>openLessonModal(null,iso));
+    const addTitle=personal?'Добавить событие':'Добавить занятие';
+    cell.innerHTML=`<div class="day-head"><span class="day-number">${d.getDate()}</span><button class="add-lesson-mini" title="${addTitle}">+</button></div><div class="lessons-list"></div>`;
+    cell.querySelector('.add-lesson-mini').addEventListener('click',(e)=>{e.stopPropagation(); personal?openPersonalEventModal(null,iso):openLessonModal(null,iso);});
+    cell.addEventListener('dblclick',()=>personal?openPersonalEventModal(null,iso):openLessonModal(null,iso));
     const list = cell.querySelector('.lessons-list');
-    const lessons = state.lessons.filter(l=>l.date===iso).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
-    lessons.forEach(l=>list.appendChild(renderLessonChip(l)));
+    if(personal){
+      const events=state.personalEvents.filter(e=>e.date===iso).sort(personalEventSort);
+      const visible=events.slice(0,5);
+      visible.forEach(e=>list.appendChild(renderPersonalEventChip(e)));
+      if(events.length>5){
+        const more=document.createElement('button');
+        more.type='button'; more.className='personal-more-btn'; more.textContent=`+ ещё ${events.length-5}`;
+        more.addEventListener('click',(ev)=>{
+          ev.stopPropagation(); more.remove();
+          events.slice(5).forEach(e=>list.appendChild(renderPersonalEventChip(e)));
+        });
+        list.appendChild(more);
+      }
+    }else{
+      const lessons = state.lessons.filter(l=>l.date===iso).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
+      lessons.forEach(l=>list.appendChild(renderLessonChip(l)));
+    }
     grid.appendChild(cell);
   }
 }
@@ -472,6 +543,45 @@ function renderLessonChip(lesson){
     <div class="lesson-meta"><span>${money(lesson.price)}</span><span class="pay-dot ${lesson.paid?'paid':''}">${lesson.paid?'✓':'○'}</span></div>`;
   btn.addEventListener('click',()=>openLessonModal(lesson.id));
   return btn;
+}
+function personalEventSort(a,b){
+  if(!!a.allDay!==!!b.allDay) return a.allDay?-1:1;
+  return (a.time||'99:99').localeCompare(b.time||'99:99') || String(a.name||'').localeCompare(String(b.name||''),'ru');
+}
+function renderPersonalEventChip(event){
+  const category=getPersonalCategory(event.categoryId);
+  const btn=document.createElement('button');
+  btn.type='button';
+  btn.className='personal-event-chip';
+  btn.style.setProperty('--event-color',category?.color||'#e7e1dd');
+  const time=event.allDay?'Весь день':(event.time||'');
+  btn.innerHTML=`${time?`<strong class="personal-event-time">${escapeHtml(time)}</strong>`:''}<span class="personal-event-name">${escapeHtml(event.name||'Событие')}</span>`;
+  btn.title=[event.name,category?.name,event.expense?money(event.expense):''].filter(Boolean).join(' · ');
+  btn.addEventListener('click',(e)=>{e.stopPropagation();openPersonalEventModal(event.id);});
+  return btn;
+}
+function renderPersonalExpenses(key,title){
+  const events=state.personalEvents.filter(e=>e.date?.startsWith(key));
+  const total=events.reduce((sum,e)=>sum+Number(e.expense||0),0);
+  $('personalExpensesTotal').textContent=money(total);
+  const summary=$('personalExpenses').querySelector('summary span:first-child');
+  if(summary) summary.textContent=`Траты за ${title.toLocaleLowerCase('ru-RU')}`;
+  const grouped=new Map();
+  events.forEach(e=>{
+    const amount=Number(e.expense||0); if(!amount) return;
+    const cat=getPersonalCategory(e.categoryId);
+    const id=cat?.id||'none';
+    const row=grouped.get(id)||{name:cat?.name||'Без категории',color:cat?.color||'#d8d1cc',amount:0};
+    row.amount+=amount; grouped.set(id,row);
+  });
+  const box=$('personalExpensesBreakdown'); box.innerHTML='';
+  const rows=[...grouped.values()].sort((a,b)=>b.amount-a.amount);
+  if(!rows.length){ box.innerHTML='<div class="personal-expenses-empty">В этом месяце траты ещё не добавлены.</div>'; return; }
+  rows.forEach(row=>{
+    const item=document.createElement('div'); item.className='personal-expense-row';
+    item.innerHTML=`<span class="personal-expense-label"><i style="--expense-color:${row.color}"></i>${escapeHtml(row.name)}</span><strong>${money(row.amount)}</strong>`;
+    box.appendChild(item);
+  });
 }
 
 function renderStudents(){
@@ -1184,6 +1294,132 @@ function addTopicRow(topic={name:'',progress:''}){
   row.querySelector('.remove-topic').addEventListener('click',()=>row.remove());
   $('topicsEditor').appendChild(row);
 }
+function renderPersonalCategoryPalette(selected){
+  const palette=$('personalCategoryColorPalette'); if(!palette) return;
+  const current=selected||$('personalCategoryColor').value||PERSONAL_CATEGORY_COLORS[0];
+  $('personalCategoryColor').value=current; palette.innerHTML='';
+  const colors=PERSONAL_CATEGORY_COLORS.includes(current)?PERSONAL_CATEGORY_COLORS:[current,...PERSONAL_CATEGORY_COLORS];
+  colors.forEach(color=>{
+    const btn=document.createElement('button'); btn.type='button';
+    btn.className='color-swatch'+(color.toLowerCase()===current.toLowerCase()?' selected':'');
+    btn.style.setProperty('--swatch',color); btn.setAttribute('aria-label',`Выбрать цвет ${color}`);
+    btn.addEventListener('click',()=>{
+      $('personalCategoryColor').value=color;
+      palette.querySelectorAll('.color-swatch').forEach(x=>x.classList.remove('selected'));
+      btn.classList.add('selected');
+    });
+    palette.appendChild(btn);
+  });
+}
+function populatePersonalCategorySelect(selectedId=''){
+  const select=$('personalEventCategory');
+  const categories=[...state.personalCategories].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ru'));
+  select.innerHTML='<option value="">Без категории</option>'+categories.map(c=>`<option value="${escapeAttr(c.id)}">${escapeHtml(c.name||'Категория')}</option>`).join('');
+  select.value=selectedId||'';
+}
+function openPersonalEventModal(id=null,date=null){
+  const event=id?getPersonalEvent(id):null;
+  $('personalEventModalTitle').textContent=event?'Редактировать событие':'Новое событие';
+  $('personalEventId').value=event?.id||'';
+  $('personalEventName').value=event?.name||'';
+  $('personalEventDate').value=event?.date||date||toISODate(new Date());
+  $('personalEventTime').value=event?.time||'18:00';
+  $('personalEventAllDay').checked=!!event?.allDay;
+  $('personalEventTime').disabled=!!event?.allDay;
+  populatePersonalCategorySelect(event?.categoryId||'');
+  $('personalEventComment').value=event?.comment||'';
+  $('personalEventLink').value=event?.link||'';
+  $('personalEventExpense').value=event?.expense?String(event.expense):'';
+  const openLink=$('personalEventOpenLink');
+  const url=safeHttpUrl(event?.link||''); openLink.hidden=!url; openLink.href=url||'#';
+  $('deletePersonalEventBtn').classList.toggle('hidden',!event);
+  $('duplicatePersonalEventBtn').classList.toggle('hidden',!event);
+  $('personalEventModalBackdrop').hidden=false;
+}
+$('personalEventAllDay').addEventListener('change',()=>{
+  $('personalEventTime').disabled=$('personalEventAllDay').checked;
+});
+$('personalEventLink').addEventListener('input',()=>{
+  const url=safeHttpUrl($('personalEventLink').value.trim());
+  $('personalEventOpenLink').hidden=!url; $('personalEventOpenLink').href=url||'#';
+});
+$('personalEventForm').addEventListener('submit',async(e)=>{
+  e.preventDefault();
+  const existingId=$('personalEventId').value;
+  const id=existingId||uid('personal_event');
+  const existing=getPersonalEvent(id);
+  const event={
+    ...(existing||{}),id,
+    name:$('personalEventName').value.trim(),
+    date:$('personalEventDate').value,
+    time:$('personalEventAllDay').checked?'':$('personalEventTime').value,
+    allDay:$('personalEventAllDay').checked,
+    categoryId:$('personalEventCategory').value||'',
+    comment:$('personalEventComment').value.trim(),
+    link:safeHttpUrl($('personalEventLink').value.trim()),
+    expense:Math.max(0,Number($('personalEventExpense').value||0)),
+    createdAt:existing?.createdAt||new Date().toISOString()
+  };
+  if(!event.name) return toast('Напиши название события');
+  try{ await persistPersonalEvent(event); closeModal('personalEvent'); toast('Событие сохранено'); }
+  catch(error){ console.error(error); toast('Не удалось сохранить событие'); }
+});
+$('duplicatePersonalEventBtn').addEventListener('click',()=>{
+  const sourceDate=$('personalEventDate').value||toISODate(new Date());
+  const next=new Date(sourceDate+'T12:00:00'); next.setDate(next.getDate()+7);
+  $('personalEventId').value=''; $('personalEventModalTitle').textContent='Дубликат события';
+  $('personalEventDate').value=toISODate(next);
+  $('deletePersonalEventBtn').classList.add('hidden'); $('duplicatePersonalEventBtn').classList.add('hidden');
+  $('personalEventDate').focus(); toast('Дубликат поставлен через неделю — дату можно изменить');
+});
+$('deletePersonalEventBtn').addEventListener('click',async()=>{
+  const id=$('personalEventId').value; if(!id) return;
+  if(!confirm('Удалить событие?')) return;
+  try{ await deleteDoc(userDoc('personalEvents',id)); closeModal('personalEvent'); toast('Событие удалено'); }
+  catch(error){ console.error(error); toast('Не удалось удалить событие'); }
+});
+
+function resetPersonalCategoryForm(){
+  $('personalCategoryId').value=''; $('personalCategoryName').value='';
+  $('personalCategoryColor').value=PERSONAL_CATEGORY_COLORS[0]; renderPersonalCategoryPalette(PERSONAL_CATEGORY_COLORS[0]);
+  $('savePersonalCategoryBtn').textContent='+ Добавить категорию';
+  $('cancelPersonalCategoryEditBtn').classList.add('hidden');
+}
+function openPersonalCategoryManager(){
+  resetPersonalCategoryForm(); renderPersonalCategoryList(); $('personalCategoryModalBackdrop').hidden=false;
+}
+function renderPersonalCategoryList(){
+  const box=$('personalCategoryList'); if(!box) return; box.innerHTML='';
+  const categories=[...state.personalCategories].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ru'));
+  if(!categories.length){ box.innerHTML='<div class="personal-category-empty">Пока нет категорий. Создай первую — например, «Спорт» или «Красота».</div>'; return; }
+  categories.forEach(category=>{
+    const row=document.createElement('div'); row.className='personal-category-row';
+    row.innerHTML=`<span class="personal-category-title"><i style="--category-color:${category.color||'#e7e1dd'}"></i>${escapeHtml(category.name||'Категория')}</span><span class="personal-category-actions"><button type="button" class="ghost-btn category-edit-btn">Изменить</button><button type="button" class="ghost-btn category-delete-btn">Удалить</button></span>`;
+    row.querySelector('.category-edit-btn').addEventListener('click',()=>{
+      $('personalCategoryId').value=category.id; $('personalCategoryName').value=category.name||''; $('personalCategoryColor').value=category.color||PERSONAL_CATEGORY_COLORS[0];
+      renderPersonalCategoryPalette(category.color||PERSONAL_CATEGORY_COLORS[0]); $('savePersonalCategoryBtn').textContent='Сохранить'; $('cancelPersonalCategoryEditBtn').classList.remove('hidden'); $('personalCategoryName').focus();
+    });
+    row.querySelector('.category-delete-btn').addEventListener('click',async()=>{
+      if(!confirm(`Удалить категорию «${category.name}»? События останутся без категории.`)) return;
+      const affected=state.personalEvents.filter(e=>e.categoryId===category.id);
+      try{
+        await Promise.all(affected.map(e=>persistPersonalEvent({...e,categoryId:''}))); await deleteDoc(userDoc('personalCategories',category.id));
+        if($('personalEventCategory')?.value===category.id) $('personalEventCategory').value='';
+        resetPersonalCategoryForm(); toast('Категория удалена');
+      }catch(error){ console.error(error); toast('Не удалось удалить категорию'); }
+    });
+    box.appendChild(row);
+  });
+}
+$('personalCategoryForm').addEventListener('submit',async(e)=>{
+  e.preventDefault(); const existingId=$('personalCategoryId').value; const id=existingId||uid('personal_category'); const existing=getPersonalCategory(id);
+  const category={...(existing||{}),id,name:$('personalCategoryName').value.trim(),color:$('personalCategoryColor').value||PERSONAL_CATEGORY_COLORS[0],createdAt:existing?.createdAt||new Date().toISOString()};
+  if(!category.name) return toast('Напиши название категории');
+  try{ await persistPersonalCategory(category); resetPersonalCategoryForm(); toast(existing?'Категория обновлена':'Категория добавлена'); }
+  catch(error){ console.error(error); toast('Не удалось сохранить категорию'); }
+});
+$('cancelPersonalCategoryEditBtn').addEventListener('click',()=>resetPersonalCategoryForm());
+
 function openLessonModal(id=null,date=null,studentId=null){
   if(!state.students.filter(s=>!s.archived).length){ toast('Сначала добавь ученика'); switchView('students'); return; }
   const l=id?getLesson(id):null;
@@ -1266,9 +1502,9 @@ $('deleteLessonBtn').addEventListener('click',async()=>{
 });
 
 document.querySelectorAll('[data-close]').forEach(btn=>btn.addEventListener('click',()=>closeModal(btn.dataset.close)));
-[$('lessonModalBackdrop'),$('studentModalBackdrop'),$('studentTopicModalBackdrop'),$('materialModalBackdrop'),$('trainerModalBackdrop'),$('folderModalBackdrop'),$('taskModalBackdrop')].forEach(backdrop=>backdrop.addEventListener('click',(e)=>{if(e.target===backdrop) backdrop.hidden=true;}));
+[$('lessonModalBackdrop'),$('studentModalBackdrop'),$('studentTopicModalBackdrop'),$('materialModalBackdrop'),$('trainerModalBackdrop'),$('folderModalBackdrop'),$('taskModalBackdrop'),$('personalEventModalBackdrop'),$('personalCategoryModalBackdrop')].filter(Boolean).forEach(backdrop=>backdrop.addEventListener('click',(e)=>{if(e.target===backdrop) backdrop.hidden=true;}));
 function closeModal(type){
-  const ids={lesson:'lessonModalBackdrop',student:'studentModalBackdrop',studentTopic:'studentTopicModalBackdrop',material:'materialModalBackdrop',trainer:'trainerModalBackdrop',folder:'folderModalBackdrop',task:'taskModalBackdrop'};
+  const ids={lesson:'lessonModalBackdrop',student:'studentModalBackdrop',studentTopic:'studentTopicModalBackdrop',material:'materialModalBackdrop',trainer:'trainerModalBackdrop',folder:'folderModalBackdrop',task:'taskModalBackdrop',personalEvent:'personalEventModalBackdrop',personalCategory:'personalCategoryModalBackdrop'};
   if(ids[type]) $(ids[type]).hidden=true;
 }
 

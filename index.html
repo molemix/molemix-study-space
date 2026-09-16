@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#fbf8f5" />
   <title>MoleMix Учебное пространство</title>
   <link rel="icon" href="assets/logo.png" />
-  <link rel="stylesheet" href="styles.css?v=20260910-1" />
+  <link rel="stylesheet" href="styles.css?v=20260915-1" />
 </head>
 <body>
   <div class="ambient-lines" aria-hidden="true">
@@ -61,27 +61,37 @@
       <section id="calendarView" class="view active-view">
         <div class="calendar-toolbar">
           <div>
-            <div class="eyebrow">Планер занятий</div>
+            <div class="calendar-mode-switch" role="group" aria-label="Вид календаря">
+              <button type="button" class="calendar-mode-btn active" id="studyCalendarMode">Учебный</button>
+              <button type="button" class="calendar-mode-btn" id="personalCalendarMode">Личный</button>
+            </div>
+            <div class="eyebrow" id="calendarEyebrow">Планер занятий</div>
             <h2 id="monthTitle">Сентябрь 2026</h2>
             <p class="section-quote">Пусть время работает на тебя.</p>
           </div>
-          <div class="month-controls">
-            <button class="icon-btn" id="prevMonth" aria-label="Предыдущий месяц">←</button>
-            <button class="soft-btn" id="todayBtn">Сегодня</button>
-            <button class="icon-btn" id="nextMonth" aria-label="Следующий месяц">→</button>
+          <div class="calendar-right-controls">
+            <div class="personal-calendar-actions" id="personalCalendarActions" hidden>
+              <button class="soft-btn" id="managePersonalCategoriesBtn" type="button">Категории</button>
+              <button class="primary-btn" id="addPersonalEventBtn" type="button">+ Событие</button>
+            </div>
+            <div class="month-controls">
+              <button class="icon-btn" id="prevMonth" aria-label="Предыдущий месяц">←</button>
+              <button class="soft-btn" id="todayBtn">Сегодня</button>
+              <button class="icon-btn" id="nextMonth" aria-label="Следующий месяц">→</button>
+            </div>
           </div>
         </div>
 
-        <div class="summary-grid">
+        <div class="summary-grid" id="studySummaryGrid">
           <article class="summary-card earned-card">
             <span>Заработано</span>
             <strong id="paidTotal">0 ₽</strong>
-            <small>проведённые занятия месяца</small>
+            <small>оплаченные занятия месяца</small>
           </article>
           <article class="summary-card future-card">
             <span>Будущие деньги</span>
             <strong id="unpaidTotal">0 ₽</strong>
-            <small>запланировано до конца месяца</small>
+            <small>неоплаченные занятия месяца</small>
           </article>
           <article class="summary-card">
             <span>Проведено</span>
@@ -89,6 +99,14 @@
             <small>занятий за месяц</small>
           </article>
         </div>
+
+        <details id="personalExpenses" class="personal-expenses" hidden>
+          <summary><span>Траты за месяц</span><span class="expenses-summary-hint">показать</span></summary>
+          <div class="personal-expenses-content">
+            <div class="personal-expenses-total"><span>Всего</span><strong id="personalExpensesTotal">0 ₽</strong></div>
+            <div id="personalExpensesBreakdown" class="personal-expenses-breakdown"></div>
+          </div>
+        </details>
 
         <div class="calendar-wrap">
           <div class="weekdays" aria-hidden="true">
@@ -596,7 +614,98 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="personalEventModalBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="personalEventModalTitle">
+      <div class="modal-head">
+        <div>
+          <div class="eyebrow">Личный календарь</div>
+          <h3 id="personalEventModalTitle">Новое событие</h3>
+        </div>
+        <button class="close-btn" data-close="personalEvent" type="button">×</button>
+      </div>
+      <form id="personalEventForm" class="form-grid">
+        <input type="hidden" id="personalEventId" />
+        <label class="full">
+          <span>Название</span>
+          <input id="personalEventName" type="text" maxlength="160" required placeholder="Например: Маникюр" />
+        </label>
+        <label>
+          <span>Дата</span>
+          <input id="personalEventDate" type="date" required />
+        </label>
+        <label>
+          <span>Время</span>
+          <input id="personalEventTime" type="time" />
+        </label>
+        <label class="full personal-all-day-row">
+          <input id="personalEventAllDay" type="checkbox" />
+          <span>Событие на весь день</span>
+        </label>
+        <div class="full personal-event-category-field">
+          <label>
+            <span>Категория</span>
+            <select id="personalEventCategory"></select>
+          </label>
+          <button type="button" class="soft-btn" id="newPersonalCategoryFromEventBtn">+ Новая категория</button>
+        </div>
+        <label class="full">
+          <span>Комментарий <small class="field-hint">необязательно</small></span>
+          <textarea id="personalEventComment" rows="3" placeholder="Адрес, запись, что важно помнить"></textarea>
+        </label>
+        <label class="full">
+          <span>Ссылка <small class="field-hint">необязательно</small></span>
+          <input id="personalEventLink" type="url" inputmode="url" placeholder="https://…" />
+        </label>
+        <a id="personalEventOpenLink" class="soft-link-button full" href="#" target="_blank" rel="noopener" hidden>Открыть ссылку ↗</a>
+        <label class="full">
+          <span>Трата, ₽ <small class="field-hint">необязательно</small></span>
+          <input id="personalEventExpense" type="number" min="0" step="1" inputmode="decimal" placeholder="0" />
+        </label>
+        <div class="modal-actions full">
+          <button type="button" class="danger-btn hidden" id="deletePersonalEventBtn">Удалить</button>
+          <button type="button" class="soft-btn hidden" id="duplicatePersonalEventBtn">Дублировать</button>
+          <div class="spacer"></div>
+          <button type="button" class="ghost-btn" data-close="personalEvent">Отмена</button>
+          <button type="submit" class="primary-btn">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="personalCategoryModalBackdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="personalCategoryModalTitle">
+      <div class="modal-head">
+        <div>
+          <div class="eyebrow">Личный календарь</div>
+          <h3 id="personalCategoryModalTitle">Категории</h3>
+        </div>
+        <button class="close-btn" data-close="personalCategory" type="button">×</button>
+      </div>
+      <form id="personalCategoryForm" class="form-grid personal-category-form">
+        <input type="hidden" id="personalCategoryId" />
+        <label class="full">
+          <span>Название категории</span>
+          <input id="personalCategoryName" type="text" maxlength="80" required placeholder="Например: Спорт" />
+        </label>
+        <div class="full color-field">
+          <span>Цвет</span>
+          <input type="hidden" id="personalCategoryColor" value="#f2a7bd" />
+          <div id="personalCategoryColorPalette" class="color-palette personal-category-palette" aria-label="Выбор цвета категории"></div>
+        </div>
+        <div class="modal-actions full">
+          <button type="button" class="ghost-btn hidden" id="cancelPersonalCategoryEditBtn">Отменить изменение</button>
+          <div class="spacer"></div>
+          <button type="submit" class="primary-btn" id="savePersonalCategoryBtn">+ Добавить категорию</button>
+        </div>
+      </form>
+      <div class="personal-category-list-wrap">
+        <div class="eyebrow">Мои категории</div>
+        <div id="personalCategoryList" class="personal-category-list"></div>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast" aria-live="polite"></div>
-  <script type="module" src="app.js?v=20260910-1"></script>
+  <script type="module" src="app.js?v=20260915-1"></script>
 </body>
 </html>
