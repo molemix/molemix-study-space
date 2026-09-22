@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#fbf8f5" />
   <title>MoleMix Учебное пространство</title>
   <link rel="icon" href="assets/logo.png" />
-  <link rel="stylesheet" href="styles.css?v=20260915-1" />
+  <link rel="stylesheet" href="styles.css?v=20260922-1" />
 </head>
 <body>
   <div class="ambient-lines" aria-hidden="true">
@@ -56,6 +56,11 @@
       <button class="nav-btn" data-view="trainers">Тренажёры</button>
       <button class="nav-btn" data-view="planner">Планер</button>
     </nav>
+
+    <div id="dataStatusBanner" class="data-status-banner" hidden role="status" aria-live="polite">
+      <span id="dataStatusText"></span>
+      <button id="retryDataBtn" class="ghost-btn compact-btn" type="button" hidden>Повторить</button>
+    </div>
 
     <main>
       <section id="calendarView" class="view active-view">
@@ -706,6 +711,6 @@
   </div>
 
   <div id="toast" class="toast" aria-live="polite"></div>
-  <script type="module" src="app.js?v=20260915-1"></script>
+  <script type="module" src="app.js?v=20260922-1"></script>
 </body>
 </html>

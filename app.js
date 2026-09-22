@@ -13,7 +13,7 @@ import {
   doc,
   setDoc,
   deleteDoc,
-  onSnapshot
+  getDocs
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -40,19 +40,28 @@ let activeStudentTab = 'lessons';
 let activeMaterialFolderId = null;
 let activeTrainerFolderId = null;
 let currentUser = null;
-let stopStudents = null;
-let stopLessons = null;
-let stopStudentTopics = null;
-let stopMaterials = null;
-let stopMaterialFolders = null;
-let stopTrainers = null;
-let stopTrainerFolders = null;
-let stopTasks = null;
-let stopPersonalEvents = null;
-let stopPersonalCategories = null;
+let currentView = 'calendar';
 let lessonsSyncReady = false;
 let studentTopicsSyncReady = false;
 let initialTopicMigrationDone = false;
+const loadedCollections = new Set();
+const loadingCollections = new Map();
+let renderScheduled = false;
+let lastAutoRefreshAt = 0;
+
+const COLLECTION_STATE_KEYS = {
+  students:'students',
+  lessons:'lessons',
+  studentTopics:'studentTopics',
+  materials:'materials',
+  materialFolders:'materialFolders',
+  trainers:'trainers',
+  trainerFolders:'trainerFolders',
+  tasks:'tasks',
+  personalEvents:'personalEvents',
+  personalCategories:'personalCategories'
+};
+const ALL_COLLECTIONS = Object.keys(COLLECTION_STATE_KEYS);
 
 const $ = (id) => document.getElementById(id);
 const views = {
@@ -188,43 +197,154 @@ function userDoc(name,id){
   if(!currentUser) throw new Error('Пользователь не авторизован');
   return doc(db, 'users', currentUser.uid, name, id);
 }
-async function persistStudent(student){
-  const {id,...data}=student;
-  await setDoc(userDoc('students',id), {...data, updatedAt:new Date().toISOString()});
+
+function scheduleRender(){
+  if(renderScheduled) return;
+  renderScheduled=true;
+  requestAnimationFrame(()=>{
+    renderScheduled=false;
+    renderAll();
+  });
 }
-async function persistLesson(lesson){
-  const {id,...data}=lesson;
-  await setDoc(userDoc('lessons',id), {...data, updatedAt:new Date().toISOString()});
+function upsertCachedItem(collectionName,item){
+  const key=COLLECTION_STATE_KEYS[collectionName];
+  if(!key) return;
+  const list=state[key];
+  const index=list.findIndex(x=>x.id===item.id);
+  if(index>=0) list[index]={...list[index],...item};
+  else list.push(item);
+  loadedCollections.add(collectionName);
 }
-async function persistStudentTopic(topic){
-  const {id,...data}=topic;
-  await setDoc(userDoc('studentTopics',id), {...data, updatedAt:new Date().toISOString()});
+function removeCachedItem(collectionName,id){
+  const key=COLLECTION_STATE_KEYS[collectionName];
+  if(!key) return;
+  state[key]=state[key].filter(x=>x.id!==id);
 }
-async function persistMaterial(material){
-  const {id,...data}=material;
-  await setDoc(userDoc('materials',id), {...data, updatedAt:new Date().toISOString()});
+async function writeCachedDoc(collectionName,item){
+  const {id,...data}=item;
+  const saved={...item,updatedAt:new Date().toISOString()};
+  await setDoc(userDoc(collectionName,id), {...data,updatedAt:saved.updatedAt});
+  upsertCachedItem(collectionName,saved);
+  scheduleRender();
+  return saved;
 }
-async function persistTrainer(trainer){
-  const {id,...data}=trainer;
-  await setDoc(userDoc('trainers',id), {...data, updatedAt:new Date().toISOString()});
+async function deleteCachedDoc(collectionName,id){
+  await deleteDoc(userDoc(collectionName,id));
+  removeCachedItem(collectionName,id);
+  scheduleRender();
 }
+function dataErrorMessage(error){
+  if(error?.code==='permission-denied') return 'Нет доступа к Firestore. Проверь правила доступа. Сохранённые данные не удалены.';
+  if(error?.code==='resource-exhausted') return 'Дневной лимит Firestore исчерпан. Данные не удалены — доступ вернётся после сброса квоты.';
+  if(error?.code==='unavailable') return 'Firebase временно недоступен. Данные не удалены.';
+  if(navigator.onLine===false) return 'Нет соединения с интернетом. Данные в облаке не удалены.';
+  return 'Не удалось загрузить данные из облака. Сохранённые данные не удалены.';
+}
+function setDataStatus(text='',kind='info',showRetry=false){
+  const banner=$('dataStatusBanner');
+  if(!banner) return;
+  if(!text){
+    banner.hidden=true;
+    banner.className='data-status-banner';
+    return;
+  }
+  banner.hidden=false;
+  banner.className=`data-status-banner ${kind}`;
+  $('dataStatusText').textContent=text;
+  $('retryDataBtn').hidden=!showRetry;
+}
+async function loadCollectionOnce(name,{force=false}={}){
+  if(!currentUser) return;
+  if(!force && loadedCollections.has(name)) return state[COLLECTION_STATE_KEYS[name]];
+  if(loadingCollections.has(name)) return loadingCollections.get(name);
+  const promise=(async()=>{
+    const snapshot=await getDocs(userCollection(name));
+    const key=COLLECTION_STATE_KEYS[name];
+    state[key]=snapshot.docs.map(d=>({id:d.id,...d.data()}));
+    loadedCollections.add(name);
+    if(name==='lessons') lessonsSyncReady=true;
+    if(name==='studentTopics') studentTopicsSyncReady=true;
+    maybeMigrateExistingLessonTopics();
+    return state[key];
+  })();
+  loadingCollections.set(name,promise);
+  try{
+    return await promise;
+  }finally{
+    loadingCollections.delete(name);
+  }
+}
+async function ensureCollections(names,{force=false,showStatus=true}={}){
+  const needed=[...new Set(names)].filter(Boolean);
+  if(!needed.length) return;
+  if(showStatus) setDataStatus('Загружаю данные…','loading',false);
+  try{
+    await Promise.all(needed.map(name=>loadCollectionOnce(name,{force})));
+    if(showStatus) setDataStatus();
+  }catch(error){
+    console.error('Firestore load failed',error);
+    setDataStatus(dataErrorMessage(error),'error',true);
+    throw error;
+  }
+}
+function requiredCollectionsForView(name=currentView){
+  if(name==='calendar') return currentCalendarMode==='personal'
+    ? ['personalEvents','personalCategories']
+    : ['students','lessons'];
+  if(name==='students') return ['students','lessons'];
+  if(name==='studentDetail') return ['students','lessons','studentTopics'];
+  if(name==='materials') return ['materials','materialFolders'];
+  if(name==='trainers') return ['trainers','trainerFolders'];
+  if(name==='planner') return ['tasks'];
+  return [];
+}
+function renderCurrentView(name=currentView){
+  if(name==='calendar') renderCalendar();
+  else if(name==='students') renderStudents();
+  else if(name==='studentDetail') renderStudentDetail();
+  else if(name==='materials') renderMaterials();
+  else if(name==='trainers') renderTrainers();
+  else if(name==='planner') renderPlanner();
+}
+function showCalendarLoading(){
+  $('paidTotal').textContent='—';
+  $('unpaidTotal').textContent='—';
+  $('conductedCount').textContent='—';
+  $('calendarGrid').innerHTML='<div class="data-placeholder">Загружаю данные календаря…</div>';
+}
+async function ensureViewData(name=currentView,{force=false,showStatus=true}={}){
+  const required=requiredCollectionsForView(name);
+  if(name==='calendar' && !required.every(x=>loadedCollections.has(x))) showCalendarLoading();
+  try{
+    await ensureCollections(required,{force,showStatus});
+    renderCurrentView(name);
+  }catch(error){
+    if(name==='calendar') $('calendarGrid').innerHTML='<div class="data-placeholder error">Не удалось загрузить календарь. Данные в Firebase не удалены.</div>';
+  }
+}
+async function refreshCurrentContext({force=true,showStatus=false}={}){
+  if(!currentUser) return;
+  const required=requiredCollectionsForView(currentView);
+  if(!required.length) return;
+  try{
+    await ensureCollections(required,{force,showStatus});
+    renderCurrentView(currentView);
+  }catch(error){
+    // Ошибка уже показана через dataStatusBanner.
+  }
+}
+async function persistStudent(student){ return writeCachedDoc('students',student); }
+async function persistLesson(lesson){ return writeCachedDoc('lessons',lesson); }
+async function persistStudentTopic(topic){ return writeCachedDoc('studentTopics',topic); }
+async function persistMaterial(material){ return writeCachedDoc('materials',material); }
+async function persistTrainer(trainer){ return writeCachedDoc('trainers',trainer); }
 async function persistLibraryFolder(kind,folder){
-  const {id,...data}=folder;
   const collectionName=kind==='material'?'materialFolders':'trainerFolders';
-  await setDoc(userDoc(collectionName,id), {...data, updatedAt:new Date().toISOString()});
+  return writeCachedDoc(collectionName,folder);
 }
-async function persistTask(task){
-  const {id,...data}=task;
-  await setDoc(userDoc('tasks',id), {...data, updatedAt:new Date().toISOString()});
-}
-async function persistPersonalEvent(event){
-  const {id,...data}=event;
-  await setDoc(userDoc('personalEvents',id), {...data, updatedAt:new Date().toISOString()});
-}
-async function persistPersonalCategory(category){
-  const {id,...data}=category;
-  await setDoc(userDoc('personalCategories',id), {...data, updatedAt:new Date().toISOString()});
-}
+async function persistTask(task){ return writeCachedDoc('tasks',task); }
+async function persistPersonalEvent(event){ return writeCachedDoc('personalEvents',event); }
+async function persistPersonalCategory(category){ return writeCachedDoc('personalCategories',category); }
 function getPersonalEvent(id){ return state.personalEvents.find(e=>e.id===id); }
 function getPersonalCategory(id){ return state.personalCategories.find(c=>c.id===id); }
 
@@ -319,81 +439,28 @@ function renderAll(){
   if(activeStudentId && getStudent(activeStudentId)) renderStudentDetail();
 }
 
-function startCloudSync(user){
-  stopCloudSync();
+async function startCloudSync(user){
+  loadedCollections.clear();
+  loadingCollections.clear();
   lessonsSyncReady=false;
   studentTopicsSyncReady=false;
   initialTopicMigrationDone=false;
-  $('authMessage').textContent='Загружаю твои данные…';
-  stopStudents = onSnapshot(userCollection('students'), snapshot=>{
-    state.students = snapshot.docs.map(d=>({id:d.id,...d.data()}));
-    renderAll();
-  }, handleFirestoreError);
-  stopLessons = onSnapshot(userCollection('lessons'), snapshot=>{
-    state.lessons = snapshot.docs.map(d=>({id:d.id,...d.data()}));
-    lessonsSyncReady=true;
-    renderAll();
-    maybeMigrateExistingLessonTopics();
-  }, handleFirestoreError);
-  stopStudentTopics = onSnapshot(userCollection('studentTopics'), snapshot=>{
-    state.studentTopics = snapshot.docs.map(d=>({id:d.id,...d.data()}));
-    studentTopicsSyncReady=true;
-    renderAll();
-    maybeMigrateExistingLessonTopics();
-  }, handleFirestoreError);
-  stopMaterials = onSnapshot(userCollection('materials'), snapshot=>{
-    state.materials = snapshot.docs.map(d=>({id:d.id,...d.data()}));
-    renderAll();
-  }, handleFirestoreError);
-  stopMaterialFolders = onSnapshot(userCollection('materialFolders'), snapshot=>{
-    state.materialFolders = snapshot.docs.map(d=>({id:d.id,...d.data()}));
-    if(activeMaterialFolderId && !state.materialFolders.some(f=>f.id===activeMaterialFolderId)) activeMaterialFolderId=null;
-    renderAll();
-  }, handleFirestoreError);
-  stopTrainers = onSnapshot(userCollection('trainers'), snapshot=>{
-    state.trainers = snapshot.docs.map(d=>({id:d.id,...d.data()}));
-    renderAll();
-  }, handleFirestoreError);
-  stopTrainerFolders = onSnapshot(userCollection('trainerFolders'), snapshot=>{
-    state.trainerFolders = snapshot.docs.map(d=>({id:d.id,...d.data()}));
-    if(activeTrainerFolderId && !state.trainerFolders.some(f=>f.id===activeTrainerFolderId)) activeTrainerFolderId=null;
-    renderAll();
-  }, handleFirestoreError);
-  stopTasks = onSnapshot(userCollection('tasks'), snapshot=>{
-    state.tasks = snapshot.docs.map(d=>({id:d.id,...d.data()}));
-    renderAll();
-  }, handleFirestoreError);
-  stopPersonalEvents = onSnapshot(userCollection('personalEvents'), snapshot=>{
-    state.personalEvents = snapshot.docs.map(d=>({id:d.id,...d.data()}));
-    renderAll();
-  }, handleFirestoreError);
-  stopPersonalCategories = onSnapshot(userCollection('personalCategories'), snapshot=>{
-    state.personalCategories = snapshot.docs.map(d=>({id:d.id,...d.data()}));
-    renderAll();
-    if(!$('personalCategoryModalBackdrop').hidden) renderPersonalCategoryList();
-    if(!$('personalEventModalBackdrop').hidden){
-      const selected=$('personalEventCategory').value;
-      populatePersonalCategorySelect(selected);
-    }
-  }, handleFirestoreError);
+  lastAutoRefreshAt=Date.now();
+  setDataStatus('Загружаю данные…','loading',false);
+  showCalendarLoading();
+  await ensureViewData('calendar',{force:true,showStatus:true});
 }
 function stopCloudSync(){
-  if(stopStudents){stopStudents();stopStudents=null;}
-  if(stopLessons){stopLessons();stopLessons=null;}
-  if(stopStudentTopics){stopStudentTopics();stopStudentTopics=null;}
-  if(stopMaterials){stopMaterials();stopMaterials=null;}
-  if(stopMaterialFolders){stopMaterialFolders();stopMaterialFolders=null;}
-  if(stopTrainers){stopTrainers();stopTrainers=null;}
-  if(stopTrainerFolders){stopTrainerFolders();stopTrainerFolders=null;}
-  if(stopTasks){stopTasks();stopTasks=null;}
-  if(stopPersonalEvents){stopPersonalEvents();stopPersonalEvents=null;}
-  if(stopPersonalCategories){stopPersonalCategories();stopPersonalCategories=null;}
+  loadedCollections.clear();
+  loadingCollections.clear();
+  lessonsSyncReady=false;
+  studentTopicsSyncReady=false;
+  initialTopicMigrationDone=false;
+  setDataStatus();
 }
 function handleFirestoreError(error){
   console.error(error);
-  let text='Не удалось получить доступ к Firestore.';
-  if(error?.code==='permission-denied') text='Firestore пока закрыт правилами доступа. Опубликуй правила из файла firestore.rules.';
-  toast(text);
+  setDataStatus(dataErrorMessage(error),'error',true);
 }
 
 $('loginBtn').addEventListener('click', async()=>{
@@ -424,7 +491,7 @@ onAuthStateChanged(auth,user=>{
     $('userEmail').textContent=user.email||'Google';
     if(user.photoURL){ $('userAvatar').src=user.photoURL; $('userAvatar').hidden=false; }
     else $('userAvatar').hidden=true;
-    startCloudSync(user);
+    startCloudSync(user).catch(error=>console.error('Initial data load failed',error));
   }else{
     stopCloudSync();
     state.students=[]; state.lessons=[]; state.studentTopics=[]; state.materials=[]; state.materialFolders=[]; state.trainers=[]; state.trainerFolders=[]; state.tasks=[]; state.personalEvents=[]; state.personalCategories=[]; activeStudentId=null; activeStudentTab='lessons'; activeMaterialFolderId=null; activeTrainerFolderId=null;
@@ -441,14 +508,13 @@ function switchView(name){
     toast('Не удалось открыть раздел. Обнови страницу.');
     return;
   }
+  currentView=name;
   Object.values(views).filter(Boolean).forEach(v=>v.classList.remove('active-view'));
   target.classList.add('active-view');
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active', b.dataset.view===name));
-  if(name==='calendar') renderCalendar();
-  if(name==='students') renderStudents();
-  if(name==='materials') renderMaterials();
-  if(name==='trainers') renderTrainers();
-  if(name==='planner') renderPlanner();
+  const required=requiredCollectionsForView(name);
+  if(required.every(x=>loadedCollections.has(x))) renderCurrentView(name);
+  else ensureViewData(name,{showStatus:true});
 }
 
 document.querySelectorAll('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>switchView(btn.dataset.view)));
@@ -457,8 +523,14 @@ $('backToStudents').addEventListener('click',()=>switchView('students'));
 $('prevMonth').addEventListener('click',()=>{ currentDate.setMonth(currentDate.getMonth()-1); renderCalendar(); });
 $('nextMonth').addEventListener('click',()=>{ currentDate.setMonth(currentDate.getMonth()+1); renderCalendar(); });
 $('todayBtn').addEventListener('click',()=>{ currentDate = new Date(); currentDate.setDate(1); renderCalendar(); });
-$('studyCalendarMode').addEventListener('click',()=>{ currentCalendarMode='study'; renderCalendar(); });
-$('personalCalendarMode').addEventListener('click',()=>{ currentCalendarMode='personal'; renderCalendar(); });
+$('studyCalendarMode').addEventListener('click',()=>{
+  currentCalendarMode='study';
+  ensureViewData('calendar',{showStatus:true});
+});
+$('personalCalendarMode').addEventListener('click',()=>{
+  currentCalendarMode='personal';
+  ensureViewData('calendar',{showStatus:true});
+});
 $('managePersonalCategoriesBtn').addEventListener('click',()=>openPersonalCategoryManager());
 $('newPersonalCategoryFromEventBtn').addEventListener('click',()=>openPersonalCategoryManager());
 $('addPersonalEventBtn').addEventListener('click',()=>{
@@ -611,7 +683,6 @@ function renderStudents(){
 function openStudentDetail(id){
   activeStudentId=id;
   activeStudentTab='lessons';
-  renderStudentDetail();
   switchView('studentDetail');
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
 }
@@ -1022,7 +1093,7 @@ $('materialForm').addEventListener('submit',async e=>{
   const material={...(existing||{}),id,name:$('materialName').value.trim(),className:$('materialClass').value.trim(),level:$('materialLevel').value,link,comment:$('materialComment').value.trim(),...membership,order:existing?.order??nextOrder(state.materials.filter(x=>folderIdsOf(x).length===0)),createdAt:existing?.createdAt||new Date().toISOString()}; if(!material.name)return toast('Напиши название материала');
   try{await persistMaterial(material);closeModal('material');toast(existing?'Материал обновлён':'Материал добавлен в библиотеку');}catch(error){console.error(error);toast('Не удалось сохранить материал');}
 });
-$('deleteMaterialBtn').addEventListener('click',async()=>{ const id=$('materialId').value,m=state.materials.find(x=>x.id===id); if(!id||!m)return; if(confirm(`Удалить материал «${m.name}» из библиотеки? Сам PDF по ссылке удалён не будет.`)){try{await deleteDoc(userDoc('materials',id));closeModal('material');toast('Материал удалён из библиотеки');}catch(error){console.error(error);toast('Не удалось удалить материал');}} });
+$('deleteMaterialBtn').addEventListener('click',async()=>{ const id=$('materialId').value,m=state.materials.find(x=>x.id===id); if(!id||!m)return; if(confirm(`Удалить материал «${m.name}» из библиотеки? Сам PDF по ссылке удалён не будет.`)){try{await deleteCachedDoc('materials',id);closeModal('material');toast('Материал удалён из библиотеки');}catch(error){console.error(error);toast('Не удалось удалить материал');}} });
 function openTrainerModal(id=null){
   const t=id?state.trainers.find(x=>x.id===id):null; $('trainerModalTitle').textContent=t?'Редактировать тренажёр':'Новый тренажёр'; $('trainerId').value=t?.id||''; $('trainerName').value=t?.name||''; $('trainerClass').value=t?.className||''; $('trainerLink').value=t?.link||''; renderFolderChoices('trainer',folderIdsOf(t)); $('deleteTrainerBtn').classList.toggle('hidden',!t); $('trainerModalBackdrop').hidden=false; setTimeout(()=>$('trainerName').focus(),0);
 }
@@ -1030,7 +1101,7 @@ $('trainerForm').addEventListener('submit',async e=>{
   e.preventDefault(); const id=$('trainerId').value||uid('trainer'),existing=state.trainers.find(x=>x.id===id),link=$('trainerLink').value.trim(); if(!safeHttpUrl(link))return toast('Вставь корректную ссылку http:// или https://'); const membership=withFolderMembership('trainer',existing,getFolderChoiceIds('trainer'));
   const trainer={...(existing||{}),id,name:$('trainerName').value.trim(),className:$('trainerClass').value.trim(),link,...membership,order:existing?.order??nextOrder(state.trainers.filter(x=>folderIdsOf(x).length===0)),createdAt:existing?.createdAt||new Date().toISOString()}; if(!trainer.name)return toast('Напиши название тренажёра'); if(!trainer.className)return toast('Укажи класс'); try{await persistTrainer(trainer);closeModal('trainer');toast(existing?'Тренажёр обновлён':'Тренажёр добавлен');}catch(error){console.error(error);toast('Не удалось сохранить тренажёр');}
 });
-$('deleteTrainerBtn').addEventListener('click',async()=>{ const id=$('trainerId').value,t=state.trainers.find(x=>x.id===id); if(!id||!t)return; if(confirm(`Удалить тренажёр «${t.name}» из списка? Сам сайт удалён не будет.`)){try{await deleteDoc(userDoc('trainers',id));closeModal('trainer');toast('Тренажёр удалён из списка');}catch(error){console.error(error);toast('Не удалось удалить тренажёр');}} });
+$('deleteTrainerBtn').addEventListener('click',async()=>{ const id=$('trainerId').value,t=state.trainers.find(x=>x.id===id); if(!id||!t)return; if(confirm(`Удалить тренажёр «${t.name}» из списка? Сам сайт удалён не будет.`)){try{await deleteCachedDoc('trainers',id);closeModal('trainer');toast('Тренажёр удалён из списка');}catch(error){console.error(error);toast('Не удалось удалить тренажёр');}} });
 function openFolderModal(kind,id=null){
   const folder=id?libraryFolderById(kind,id):null; $('folderKind').value=kind; $('folderId').value=folder?.id||''; $('folderModalTitle').textContent=folder?'Редактировать папку':'Новая папка'; $('folderName').value=folder?.name||''; $('folderColor').value=folder?.color||FOLDER_COLORS[0]; renderFolderColorPalette($('folderColor').value); $('deleteFolderBtn').classList.toggle('hidden',!folder); $('folderModalBackdrop').hidden=false; setTimeout(()=>$('folderName').focus(),0);
 }
@@ -1040,7 +1111,7 @@ $('folderForm').addEventListener('submit',async e=>{
 $('deleteFolderBtn').addEventListener('click',async()=>{
   const kind=$('folderKind').value,id=$('folderId').value,folder=libraryFolderById(kind,id); if(!folder)return; if(!confirm(`Удалить папку «${folder.name}»? ${kind==='material'?'Материалы':'Тренажёры'} внутри останутся в библиотеке.`))return;
   const config=libraryConfig(kind), affected=config.items.filter(item=>folderIdsOf(item).includes(id));
-  try{await Promise.all(affected.map(item=>{const folderIds=folderIdsOf(item).filter(x=>x!==id),folderOrders={...(item.folderOrders||{})};delete folderOrders[id];const next={...item,folderIds,folderOrders};return kind==='material'?persistMaterial(next):persistTrainer(next);})); await deleteDoc(userDoc(kind==='material'?'materialFolders':'trainerFolders',id)); if(kind==='material')activeMaterialFolderId=null;else activeTrainerFolderId=null;closeModal('folder');toast('Папка удалена, записи сохранены');}catch(error){console.error(error);toast('Не удалось удалить папку');}
+  try{await Promise.all(affected.map(item=>{const folderIds=folderIdsOf(item).filter(x=>x!==id),folderOrders={...(item.folderOrders||{})};delete folderOrders[id];const next={...item,folderIds,folderOrders};return kind==='material'?persistMaterial(next):persistTrainer(next);})); await deleteCachedDoc(kind==='material'?'materialFolders':'trainerFolders',id); if(kind==='material')activeMaterialFolderId=null;else activeTrainerFolderId=null;closeModal('folder');toast('Папка удалена, записи сохранены');}catch(error){console.error(error);toast('Не удалось удалить папку');}
 });
 
 function plannerTodayKey(){ return toISODate(new Date()); }
@@ -1153,7 +1224,7 @@ $('taskForm').addEventListener('submit',async(e)=>{
 $('deleteTaskBtn').addEventListener('click',async()=>{
   const id=$('taskId').value; const task=state.tasks.find(t=>t.id===id); if(!task)return;
   if(confirm(`Удалить задачу «${task.text}»?`)){
-    try{await deleteDoc(userDoc('tasks',id));closeModal('task');toast('Задача удалена');}
+    try{await deleteCachedDoc('tasks',id);closeModal('task');toast('Задача удалена');}
     catch(error){console.error(error);toast('Не удалось удалить задачу');}
   }
 });
@@ -1161,7 +1232,7 @@ $('clearCompletedTasks').addEventListener('click',async()=>{
   const done=state.tasks.filter(t=>t.completed); if(!done.length)return;
   if(!confirm(`Удалить выполненные задачи (${done.length})?`))return;
   try{
-    await Promise.all(done.map(t=>deleteDoc(userDoc('tasks',t.id))));
+    await Promise.all(done.map(t=>deleteCachedDoc('tasks',t.id)));
     toast('Выполненные очищены');
   }catch(error){console.error(error);toast('Не удалось очистить выполненные');}
 });
@@ -1375,7 +1446,7 @@ $('duplicatePersonalEventBtn').addEventListener('click',()=>{
 $('deletePersonalEventBtn').addEventListener('click',async()=>{
   const id=$('personalEventId').value; if(!id) return;
   if(!confirm('Удалить событие?')) return;
-  try{ await deleteDoc(userDoc('personalEvents',id)); closeModal('personalEvent'); toast('Событие удалено'); }
+  try{ await deleteCachedDoc('personalEvents',id); closeModal('personalEvent'); toast('Событие удалено'); }
   catch(error){ console.error(error); toast('Не удалось удалить событие'); }
 });
 
@@ -1403,7 +1474,7 @@ function renderPersonalCategoryList(){
       if(!confirm(`Удалить категорию «${category.name}»? События останутся без категории.`)) return;
       const affected=state.personalEvents.filter(e=>e.categoryId===category.id);
       try{
-        await Promise.all(affected.map(e=>persistPersonalEvent({...e,categoryId:''}))); await deleteDoc(userDoc('personalCategories',category.id));
+        await Promise.all(affected.map(e=>persistPersonalEvent({...e,categoryId:''}))); await deleteCachedDoc('personalCategories',category.id);
         if($('personalEventCategory')?.value===category.id) $('personalEventCategory').value='';
         resetPersonalCategoryForm(); toast('Категория удалена');
       }catch(error){ console.error(error); toast('Не удалось удалить категорию'); }
@@ -1496,7 +1567,7 @@ $('duplicateLessonBtn').addEventListener('click',()=>{
 $('deleteLessonBtn').addEventListener('click',async()=>{
   const id=$('lessonId').value; if(!id)return;
   if(confirm('Удалить занятие? Для отменённых занятий лучше использовать статус «Отменено» — так история сохранится.')){
-    try{ await deleteDoc(userDoc('lessons',id)); closeModal('lesson'); toast('Занятие удалено'); }
+    try{ await deleteCachedDoc('lessons',id); closeModal('lesson'); toast('Занятие удалено'); }
     catch(error){console.error(error);toast('Не удалось удалить занятие');}
   }
 });
@@ -1508,11 +1579,35 @@ function closeModal(type){
   if(ids[type]) $(ids[type]).hidden=true;
 }
 
-$('exportBtn').addEventListener('click',()=>{
-  const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),ownerUid:currentUser?.uid||null,...state},null,2)],{type:'application/json'});
-  const url=URL.createObjectURL(blob); const a=document.createElement('a');
-  a.href=url; a.download=`molemix-backup-${toISODate(new Date())}.json`; a.click(); URL.revokeObjectURL(url); toast('Резервная копия скачана');
+$('exportBtn').addEventListener('click',async()=>{
+  try{
+    setDataStatus('Готовлю резервную копию…','loading',false);
+    await ensureCollections(ALL_COLLECTIONS,{force:true,showStatus:false});
+    setDataStatus();
+    const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),ownerUid:currentUser?.uid||null,...state},null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob); const a=document.createElement('a');
+    a.href=url; a.download=`molemix-backup-${toISODate(new Date())}.json`; a.click(); URL.revokeObjectURL(url); toast('Резервная копия скачана');
+  }catch(error){
+    console.error(error);
+    setDataStatus(dataErrorMessage(error),'error',true);
+    toast('Не удалось подготовить полную резервную копию');
+  }
 });
+
+$('retryDataBtn')?.addEventListener('click',()=>{
+  refreshCurrentContext({force:true,showStatus:true});
+});
+async function maybeAutoRefresh(){
+  if(!currentUser || document.hidden) return;
+  const now=Date.now();
+  if(now-lastAutoRefreshAt < 10*60*1000) return;
+  lastAutoRefreshAt=now;
+  await refreshCurrentContext({force:true,showStatus:false});
+}
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden) maybeAutoRefresh();
+});
+window.addEventListener('focus',()=>maybeAutoRefresh());
 
 function toISODate(d){
   const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');

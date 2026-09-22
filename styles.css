@@ -279,3 +279,48 @@ body{position:relative}
 @media(max-width:720px){.calendar-right-controls{width:100%;align-items:stretch}.personal-calendar-actions{justify-content:flex-end}.calendar-mode-switch{align-self:flex-start}.personal-category-palette{grid-template-columns:repeat(6,30px)}.personal-category-row{align-items:flex-start;flex-direction:column}.personal-category-actions{width:100%}.personal-category-actions .ghost-btn{flex:1}.personal-event-name{font-size:10px}.personal-event-time{font-size:8px}}
 
 .personal-event-category-field{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:9px;align-items:end}.personal-event-category-field label>span{display:block;font-size:12px;font-weight:800;color:#6d6670;margin-bottom:6px}.personal-event-category-field select{width:100%;border:1px solid #ded5cf;background:white;border-radius:13px;padding:11px 12px;color:var(--text);outline:none}.personal-event-category-field .soft-btn{height:43px;white-space:nowrap}@media(max-width:620px){.personal-event-category-field{grid-template-columns:1fr}.personal-event-category-field .soft-btn{width:100%}}
+
+
+/* Firebase data status — build 2026-09-22.1 */
+.data-status-banner{
+  max-width:1380px;
+  margin:10px auto 0;
+  padding:10px 14px;
+  border:1px solid rgba(143,123,205,.18);
+  border-radius:16px;
+  background:rgba(248,245,255,.92);
+  color:#665d70;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  font-size:13px;
+}
+.data-status-banner[hidden]{display:none!important}
+.data-status-banner.loading{
+  background:rgba(248,245,255,.88);
+}
+.data-status-banner.error{
+  background:rgba(255,245,246,.96);
+  border-color:rgba(211,133,146,.28);
+  color:#865763;
+}
+.data-placeholder{
+  grid-column:1/-1;
+  min-height:210px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:28px;
+  color:var(--muted);
+  font-size:14px;
+}
+.data-placeholder.error{color:#865763}
+@media (max-width:720px){
+  .data-status-banner{
+    margin:8px 14px 0;
+    align-items:flex-start;
+    border-radius:14px;
+  }
+}
