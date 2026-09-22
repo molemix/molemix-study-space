@@ -626,9 +626,11 @@ function renderPersonalEventChip(event){
   btn.type='button';
   btn.className='personal-event-chip';
   btn.style.setProperty('--event-color',category?.color||'#e7e1dd');
-  const time=event.allDay?'Весь день':(event.time||'');
-  btn.innerHTML=`${time?`<strong class="personal-event-time">${escapeHtml(time)}</strong>`:''}<span class="personal-event-name">${escapeHtml(event.name||'Событие')}</span>`;
-  btn.title=[event.name,category?.name,event.expense?money(event.expense):''].filter(Boolean).join(' · ');
+  const amount=Number(event.expense||0);
+  const amountLabel=amount>0?money(amount):'';
+  btn.innerHTML=`${amountLabel?`<strong class="personal-event-time">${escapeHtml(amountLabel)}</strong>`:''}<span class="personal-event-name">${escapeHtml(event.name||'Событие')}</span>`;
+  const eventTime=event.allDay?'Весь день':(event.time||'');
+  btn.title=[event.name,category?.name,eventTime,amountLabel].filter(Boolean).join(' · ');
   btn.addEventListener('click',(e)=>{e.stopPropagation();openPersonalEventModal(event.id);});
   return btn;
 }
