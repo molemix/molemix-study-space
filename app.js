@@ -693,6 +693,7 @@ function renderStudentDetail(){
   if(!s) return switchView('students');
   const lessons=state.lessons.filter(l=>l.studentId===s.id).sort((a,b)=>`${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
   const activeLessons=lessons.filter(l=>!l.cancelled);
+  const journalLessons=activeLessons.filter(l=>l.conducted);
   const paid=activeLessons.filter(l=>l.paid).reduce((sum,l)=>sum+Number(l.price||0),0);
   const progresses=activeLessons.flatMap(l=>(l.topics||[]).map(t=>Number(t.progress)).filter(Boolean));
   const avg=progresses.length?(progresses.reduce((a,b)=>a+b,0)/progresses.length).toFixed(1):'—';
@@ -727,7 +728,7 @@ function renderStudentDetail(){
     <div id="studentLessonsPanel" class="student-tab-panel" ${activeStudentTab==='lessons'?'':'hidden'}>
       <div class="journal">
         <div class="journal-head"><div><div class="eyebrow">История занятий</div><h3>Журнал</h3></div><button class="primary-btn" id="addLessonForStudent">+ Занятие</button></div>
-        ${lessons.length ? renderJournalTable(lessons) : '<div class="empty-state" style="margin:16px">У этого ученика пока нет занятий.</div>'}
+        ${journalLessons.length ? renderJournalTable(journalLessons) : '<div class="empty-state" style="margin:16px">У этого ученика пока нет проведённых занятий.</div>'}
       </div>
     </div>
 
