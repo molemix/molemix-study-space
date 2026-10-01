@@ -324,3 +324,41 @@ body{position:relative}
     border-radius:14px;
   }
 }
+
+
+/* October 2026 — Payments calendar */
+.calendar-mode-switch{display:inline-flex;gap:5px;padding:5px;margin:0 0 9px;background:rgba(255,255,255,.68);border:1px solid var(--line);border-radius:999px}
+.calendar-mode-btn{border:0;background:transparent;color:var(--muted);border-radius:999px;padding:8px 14px;font-size:12px;font-weight:800;transition:.15s ease}
+.calendar-mode-btn.active{background:#fff;color:var(--text);box-shadow:0 4px 14px rgba(69,52,84,.07)}
+.calendar-right-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.personal-calendar-actions,.payment-calendar-actions{display:flex;align-items:center;gap:8px}
+.payment-add-btn,.payment-save-btn{background:linear-gradient(135deg,#e98f48,#f2a85e);box-shadow:0 9px 22px rgba(224,139,69,.22)}
+.payment-summary-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+.payment-total-card{background:linear-gradient(145deg,rgba(255,253,250,.96),rgba(255,245,235,.94))}
+.payment-formed-card{background:linear-gradient(145deg,rgba(255,253,250,.96),rgba(255,236,216,.94))}
+.payment-pending-card{background:linear-gradient(145deg,rgba(255,253,250,.96),rgba(242,240,238,.96))}
+.payment-tax-card{background:linear-gradient(145deg,rgba(255,253,250,.96),rgba(246,240,252,.94))}
+.payment-chip{width:100%;border-radius:11px;padding:8px 9px;text-align:left;border:1px solid transparent;display:flex;flex-direction:column;gap:2px;color:var(--text);min-width:0;transition:.14s ease}
+.payment-chip:hover{transform:translateY(-1px)}
+.payment-chip.pending{background:#eeeae7;border-color:#ded8d3;color:#5f5a5d}
+.payment-chip.formed{background:#f8c38f;border-color:#eda666;color:#543921}
+.payment-chip-amount{font-size:12px;line-height:1.2;white-space:nowrap}
+.payment-chip-meta{font-size:10.5px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.payment-day-cell .add-lesson-mini:hover{background:#fff0e2;color:#c66f2d}
+.payment-more-btn{background:#f4eee9!important;color:#7e6f65!important}
+.payment-modal-total{font-size:20px;color:#c66f2d;white-space:nowrap}
+.payment-lesson-choices{display:grid;gap:7px;margin-top:12px;max-height:310px;overflow:auto;padding-right:3px}
+.payment-lesson-choice{display:grid!important;grid-template-columns:24px minmax(0,1fr) auto;align-items:center;gap:10px;border:1px solid #e8e0db;border-radius:13px;padding:10px 11px;background:white;cursor:pointer;margin:0}
+.payment-lesson-choice input{position:absolute!important;opacity:0;width:1px!important;height:1px!important}
+.payment-lesson-check{width:22px;height:22px;border:1px solid #d6cdc7;border-radius:7px;background:#fff;box-shadow:inset 0 0 0 6px #fff;transition:.14s ease}
+.payment-lesson-choice input:checked+.payment-lesson-check{background:#e99551;border-color:#e99551;box-shadow:inset 0 0 0 5px #fff}
+.payment-lesson-info{min-width:0}.payment-lesson-info strong{display:block;font-size:12px;color:var(--text)}.payment-lesson-info small{display:block;margin-top:2px;color:var(--muted);font-size:10.5px}.payment-lesson-choice>b{font-size:12px;white-space:nowrap;color:#655d65}
+.payment-lessons-empty{padding:18px;text-align:center;color:var(--muted);font-size:12px;border:1px dashed #ddd3cd;border-radius:13px}
+.payment-status-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+.payment-formed-toggle input:checked+.toggle-dot{background:#fff0e0;border-color:#efb47e;box-shadow:inset 0 0 0 7px #e99551}
+.payment-tax-preview{border-radius:14px;padding:11px 13px;background:#f7f2fb;color:#6f5b85;font-size:12px;font-weight:800}
+.payment-sync-note{padding:10px 13px;border-radius:13px;background:#fff3e8;border:1px solid #f2d2b4;color:#8a5c36;font-size:12px;line-height:1.4}
+.receipt-inline{display:block;margin-top:4px;font-size:10px;font-weight:800}.receipt-inline.formed{color:#c56d2e}.receipt-inline.pending{color:#8a8187}
+#lessonPaid:disabled+.toggle-dot{opacity:.62}
+@media(max-width:1100px){.payment-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){.calendar-mode-switch{width:100%;display:flex}.calendar-mode-btn{flex:1;padding:8px 9px}.calendar-right-controls{width:100%;align-items:stretch;flex-direction:column}.personal-calendar-actions,.payment-calendar-actions{width:100%}.personal-calendar-actions button,.payment-calendar-actions button{flex:1}.payment-summary-grid{grid-template-columns:1fr 1fr}.payment-status-row{grid-template-columns:1fr}.payment-lesson-choice{grid-template-columns:22px minmax(0,1fr) auto;gap:8px;padding:9px}.payment-modal-total{font-size:17px}}

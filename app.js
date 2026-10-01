@@ -1,4 +1,4 @@
-// MoleMix build 2026-09-15.1 — personal calendar, categories and monthly expenses
+// MoleMix build 2026-10-02.1 — optimized calendars + payments/receipts sync
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import {
   getAuth,
@@ -31,7 +31,7 @@ const db = getFirestore(firebaseApp);
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-const state = { students: [], lessons: [], studentTopics: [], materials: [], materialFolders: [], trainers: [], trainerFolders: [], tasks: [], personalEvents: [], personalCategories: [] };
+const state = { students: [], lessons: [], studentTopics: [], materials: [], materialFolders: [], trainers: [], trainerFolders: [], tasks: [], personalEvents: [], personalCategories: [], payments: [] };
 let currentDate = new Date();
 currentDate.setDate(1);
 let currentCalendarMode = 'study';
@@ -59,7 +59,8 @@ const COLLECTION_STATE_KEYS = {
   trainerFolders:'trainerFolders',
   tasks:'tasks',
   personalEvents:'personalEvents',
-  personalCategories:'personalCategories'
+  personalCategories:'personalCategories',
+  payments:'payments'
 };
 const ALL_COLLECTIONS = Object.keys(COLLECTION_STATE_KEYS);
 
@@ -182,6 +183,7 @@ function toast(text){
 }
 function getStudent(id){ return state.students.find(s=>s.id===id); }
 function getLesson(id){ return state.lessons.find(l=>l.id===id); }
+function getPayment(id){ return state.payments.find(p=>p.id===id); }
 function safeHttpUrl(value){
   if(!value) return '';
   try{
@@ -288,11 +290,13 @@ async function ensureCollections(names,{force=false,showStatus=true}={}){
   }
 }
 function requiredCollectionsForView(name=currentView){
-  if(name==='calendar') return currentCalendarMode==='personal'
-    ? ['personalEvents','personalCategories']
-    : ['students','lessons'];
+  if(name==='calendar'){
+    if(currentCalendarMode==='personal') return ['personalEvents','personalCategories'];
+    if(currentCalendarMode==='payments') return ['students','lessons','payments'];
+    return ['students','lessons'];
+  }
   if(name==='students') return ['students','lessons'];
-  if(name==='studentDetail') return ['students','lessons','studentTopics'];
+  if(name==='studentDetail') return ['students','lessons','studentTopics','payments'];
   if(name==='materials') return ['materials','materialFolders'];
   if(name==='trainers') return ['trainers','trainerFolders'];
   if(name==='planner') return ['tasks'];
@@ -310,6 +314,10 @@ function showCalendarLoading(){
   $('paidTotal').textContent='—';
   $('unpaidTotal').textContent='—';
   $('conductedCount').textContent='—';
+  if($('paymentMonthTotal')) $('paymentMonthTotal').textContent='—';
+  if($('paymentReceiptCount')) $('paymentReceiptCount').textContent='—';
+  if($('paymentPendingTotal')) $('paymentPendingTotal').textContent='—';
+  if($('paymentTaxTotal')) $('paymentTaxTotal').textContent='—';
   $('calendarGrid').innerHTML='<div class="data-placeholder">Загружаю данные календаря…</div>';
 }
 async function ensureViewData(name=currentView,{force=false,showStatus=true}={}){
@@ -345,6 +353,7 @@ async function persistLibraryFolder(kind,folder){
 async function persistTask(task){ return writeCachedDoc('tasks',task); }
 async function persistPersonalEvent(event){ return writeCachedDoc('personalEvents',event); }
 async function persistPersonalCategory(category){ return writeCachedDoc('personalCategories',category); }
+async function persistPayment(payment){ return writeCachedDoc('payments',payment); }
 function getPersonalEvent(id){ return state.personalEvents.find(e=>e.id===id); }
 function getPersonalCategory(id){ return state.personalCategories.find(c=>c.id===id); }
 
@@ -494,7 +503,7 @@ onAuthStateChanged(auth,user=>{
     startCloudSync(user).catch(error=>console.error('Initial data load failed',error));
   }else{
     stopCloudSync();
-    state.students=[]; state.lessons=[]; state.studentTopics=[]; state.materials=[]; state.materialFolders=[]; state.trainers=[]; state.trainerFolders=[]; state.tasks=[]; state.personalEvents=[]; state.personalCategories=[]; activeStudentId=null; activeStudentTab='lessons'; activeMaterialFolderId=null; activeTrainerFolderId=null;
+    state.students=[]; state.lessons=[]; state.studentTopics=[]; state.materials=[]; state.materialFolders=[]; state.trainers=[]; state.trainerFolders=[]; state.tasks=[]; state.personalEvents=[]; state.personalCategories=[]; state.payments=[]; activeStudentId=null; activeStudentTab='lessons'; activeMaterialFolderId=null; activeTrainerFolderId=null;
     $('appShell').hidden=true;
     $('authGate').hidden=false;
     $('authMessage').textContent='Войди в свой Google-аккаунт, чтобы загрузить учеников и занятия.';
@@ -531,6 +540,10 @@ $('personalCalendarMode').addEventListener('click',()=>{
   currentCalendarMode='personal';
   ensureViewData('calendar',{showStatus:true});
 });
+$('paymentsCalendarMode').addEventListener('click',()=>{
+  currentCalendarMode='payments';
+  ensureViewData('calendar',{showStatus:true});
+});
 $('managePersonalCategoriesBtn').addEventListener('click',()=>openPersonalCategoryManager());
 $('newPersonalCategoryFromEventBtn').addEventListener('click',()=>openPersonalCategoryManager());
 $('addPersonalEventBtn').addEventListener('click',()=>{
@@ -539,20 +552,33 @@ $('addPersonalEventBtn').addEventListener('click',()=>{
   const d=new Date(currentDate.getFullYear(),currentDate.getMonth(),sameMonth?now.getDate():1);
   openPersonalEventModal(null,toISODate(d));
 });
+$('addPaymentBtn').addEventListener('click',()=>{
+  const now=new Date();
+  const sameMonth=now.getFullYear()===currentDate.getFullYear() && now.getMonth()===currentDate.getMonth();
+  const d=new Date(currentDate.getFullYear(),currentDate.getMonth(),sameMonth?now.getDate():1);
+  openPaymentModal(null,toISODate(d));
+});
 
 function renderCalendar(){
   const title = currentDate.toLocaleDateString('ru-RU',{month:'long',year:'numeric'});
   $('monthTitle').textContent = title.charAt(0).toUpperCase()+title.slice(1);
   const personal=currentCalendarMode==='personal';
-  $('studyCalendarMode').classList.toggle('active',!personal);
+  const payments=currentCalendarMode==='payments';
+  const study=!personal&&!payments;
+  $('studyCalendarMode').classList.toggle('active',study);
   $('personalCalendarMode').classList.toggle('active',personal);
-  $('calendarEyebrow').textContent=personal?'Личный календарь':'Планер занятий';
-  $('studySummaryGrid').hidden=personal;
+  $('paymentsCalendarMode').classList.toggle('active',payments);
+  $('calendarEyebrow').textContent=personal?'Личный календарь':(payments?'Календарь оплат':'Планер занятий');
+  $('calendarQuote').textContent=personal?'Пусть в расписании остаётся место и для себя.':(payments?'Порядок в доходах — спокойствие в налогах.':'Пусть время работает на тебя.');
+  $('studySummaryGrid').hidden=!study;
+  $('paymentSummaryGrid').hidden=!payments;
   $('personalExpenses').hidden=!personal;
   $('personalCalendarActions').hidden=!personal;
+  $('paymentCalendarActions').hidden=!payments;
 
   const key = monthKey(currentDate);
   if(personal) renderPersonalExpenses(key,title);
+  else if(payments) renderPaymentSummary(key);
   else{
     const monthLessons = state.lessons.filter(l=>l.date?.startsWith(key));
     const earned = monthLessons.filter(l=>l.paid && !l.cancelled).reduce((s,l)=>s+Number(l.price||0),0);
@@ -577,13 +603,22 @@ function renderCalendar(){
     d.setDate(start.getDate()+i);
     const iso = toISODate(d);
     const cell = document.createElement('div');
-    cell.className='day-cell'+(personal?' personal-day-cell':'');
+    cell.className='day-cell'+(personal?' personal-day-cell':'')+(payments?' payment-day-cell':'');
     if(d.getMonth()!==month) cell.classList.add('outside');
     if(d.getTime()===today.getTime()) cell.classList.add('today');
-    const addTitle=personal?'Добавить событие':'Добавить занятие';
+    const addTitle=personal?'Добавить событие':(payments?'Добавить оплату':'Добавить занятие');
     cell.innerHTML=`<div class="day-head"><span class="day-number">${d.getDate()}</span><button class="add-lesson-mini" title="${addTitle}">+</button></div><div class="lessons-list"></div>`;
-    cell.querySelector('.add-lesson-mini').addEventListener('click',(e)=>{e.stopPropagation(); personal?openPersonalEventModal(null,iso):openLessonModal(null,iso);});
-    cell.addEventListener('dblclick',()=>personal?openPersonalEventModal(null,iso):openLessonModal(null,iso));
+    cell.querySelector('.add-lesson-mini').addEventListener('click',(e)=>{
+      e.stopPropagation();
+      if(personal) openPersonalEventModal(null,iso);
+      else if(payments) openPaymentModal(null,iso);
+      else openLessonModal(null,iso);
+    });
+    cell.addEventListener('dblclick',()=>{
+      if(personal) openPersonalEventModal(null,iso);
+      else if(payments) openPaymentModal(null,iso);
+      else openLessonModal(null,iso);
+    });
     const list = cell.querySelector('.lessons-list');
     if(personal){
       const events=state.personalEvents.filter(e=>e.date===iso).sort(personalEventSort);
@@ -598,12 +633,57 @@ function renderCalendar(){
         });
         list.appendChild(more);
       }
+    }else if(payments){
+      const rows=state.payments.filter(p=>p.date===iso).sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||'')));
+      const visible=rows.slice(0,5);
+      visible.forEach(p=>list.appendChild(renderPaymentChip(p)));
+      if(rows.length>5){
+        const more=document.createElement('button');
+        more.type='button'; more.className='personal-more-btn payment-more-btn'; more.textContent=`+ ещё ${rows.length-5}`;
+        more.addEventListener('click',(ev)=>{
+          ev.stopPropagation(); more.remove();
+          rows.slice(5).forEach(p=>list.appendChild(renderPaymentChip(p)));
+        });
+        list.appendChild(more);
+      }
     }else{
       const lessons = state.lessons.filter(l=>l.date===iso).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
       lessons.forEach(l=>list.appendChild(renderLessonChip(l)));
     }
     grid.appendChild(cell);
   }
+}
+function paymentRate(payment){
+  const business=payment?.payerType==='business';
+  const bonus=payment?.taxBonus!==false;
+  return business ? (bonus?4:6) : (bonus?3:4);
+}
+function paymentTax(payment){
+  return Math.round(Number(payment?.amount||0)*paymentRate(payment))/100;
+}
+function renderPaymentSummary(key){
+  const rows=state.payments.filter(p=>p.date?.startsWith(key));
+  const total=rows.reduce((sum,p)=>sum+Number(p.amount||0),0);
+  const formed=rows.filter(p=>p.receiptFormed);
+  const pending=rows.filter(p=>!p.receiptFormed);
+  const pendingTotal=pending.reduce((sum,p)=>sum+Number(p.amount||0),0);
+  const tax=rows.reduce((sum,p)=>sum+paymentTax(p),0);
+  $('paymentMonthTotal').textContent=money(total);
+  $('paymentReceiptCount').textContent=`${formed.length} / ${rows.length}`;
+  $('paymentPendingTotal').textContent=money(pendingTotal);
+  $('paymentTaxTotal').textContent=money(Math.round(tax));
+}
+function renderPaymentChip(payment){
+  const student=getStudent(payment.studentId);
+  const btn=document.createElement('button');
+  btn.type='button';
+  btn.className=`payment-chip ${payment.receiptFormed?'formed':'pending'}`;
+  const count=Array.isArray(payment.lessonIds)?payment.lessonIds.length:0;
+  const countLabel=count===1?'1 занятие':(count>=2&&count<=4?`${count} занятия`:`${count} занятий`);
+  btn.innerHTML=`<strong class="payment-chip-amount">${money(payment.amount)}</strong><span class="payment-chip-meta">${escapeHtml(student?.name||'Ученик')} · ${countLabel}</span>`;
+  btn.title=[payment.receiptFormed?'Чек сформирован':'Чек не сформирован',payment.receiptSent?'отправлен':'не отправлен'].join(' · ');
+  btn.addEventListener('click',(e)=>{e.stopPropagation();openPaymentModal(payment.id);});
+  return btn;
 }
 function renderLessonChip(lesson){
   const s = getStudent(lesson.studentId);
@@ -616,6 +696,135 @@ function renderLessonChip(lesson){
   btn.addEventListener('click',()=>openLessonModal(lesson.id));
   return btn;
 }
+function paymentLessons(payment){
+  const ids=new Set(Array.isArray(payment?.lessonIds)?payment.lessonIds:[]);
+  return state.lessons.filter(l=>ids.has(l.id));
+}
+function paymentSelectedLessonIds(){
+  return [...document.querySelectorAll('#paymentLessonChoices input[type="checkbox"]:checked')].map(x=>x.value);
+}
+function paymentSelectedAmount(){
+  return paymentSelectedLessonIds().reduce((sum,id)=>sum+Number(getLesson(id)?.price||0),0);
+}
+function paymentRateFromForm(){
+  const business=$('paymentPayerType').value==='business';
+  const bonus=$('paymentTaxBonus').value!=='no';
+  return business?(bonus?4:6):(bonus?3:4);
+}
+function updatePaymentPreview(){
+  const total=paymentSelectedAmount();
+  $('paymentModalTotal').textContent=money(total);
+  const rate=paymentRateFromForm();
+  $('paymentTaxPreview').textContent=`Примерный налог: ${money(Math.round(total*rate)/100)} · ставка ${rate}%`;
+}
+function populatePaymentStudentSelect(selected=''){
+  const students=state.students.filter(s=>!s.archived).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ru'));
+  $('paymentStudent').innerHTML='<option value="">Выбери ученика</option>'+students.map(s=>`<option value="${escapeAttr(s.id)}">${escapeHtml(s.name)}</option>`).join('');
+  $('paymentStudent').value=selected||'';
+}
+function renderPaymentLessonChoices(payment=null){
+  const host=$('paymentLessonChoices');
+  const studentId=$('paymentStudent').value;
+  const selected=new Set(Array.isArray(payment?.lessonIds)?payment.lessonIds:paymentSelectedLessonIds());
+  if(!studentId){ host.innerHTML='<div class="payment-lessons-empty">Сначала выбери ученика.</div>'; updatePaymentPreview(); return; }
+  const rows=state.lessons
+    .filter(l=>l.studentId===studentId && !l.cancelled && (!l.paymentId || l.paymentId===payment?.id))
+    .sort((a,b)=>`${b.date||''} ${b.time||''}`.localeCompare(`${a.date||''} ${a.time||''}`));
+  if(!rows.length){ host.innerHTML='<div class="payment-lessons-empty">Нет занятий, которые можно привязать к этой оплате.</div>'; updatePaymentPreview(); return; }
+  host.innerHTML=rows.map(l=>{
+    const status=l.conducted?'проведено':'запланировано';
+    const legacy=l.paid&&!l.paymentId?' · уже отмечено оплачено':'';
+    return `<label class="payment-lesson-choice"><input type="checkbox" value="${escapeAttr(l.id)}" ${selected.has(l.id)?'checked':''}><span class="payment-lesson-check"></span><span class="payment-lesson-info"><strong>${formatDateRu(l.date,false)} · ${escapeHtml(l.time||'—')}</strong><small>${status}${legacy}</small></span><b>${money(l.price)}</b></label>`;
+  }).join('');
+  host.querySelectorAll('input[type="checkbox"]').forEach(x=>x.addEventListener('change',updatePaymentPreview));
+  updatePaymentPreview();
+}
+function updatePaymentReceiptControls(){
+  const formed=$('paymentReceiptFormed').checked;
+  $('paymentReceiptSent').disabled=!formed;
+  $('paymentReceiptUrl').disabled=!formed;
+  if(!formed) $('paymentReceiptSent').checked=false;
+}
+function openPaymentModal(id=null,date=null){
+  if(!state.students.filter(s=>!s.archived).length){ toast('Сначала добавь ученика'); switchView('students'); return; }
+  const payment=id?getPayment(id):null;
+  $('paymentModalTitle').textContent=payment?'Редактировать оплату':'Новая оплата';
+  $('paymentId').value=payment?.id||'';
+  populatePaymentStudentSelect(payment?.studentId||'');
+  $('paymentDate').value=payment?.date||date||toISODate(new Date());
+  $('paymentReceiptFormed').checked=!!payment?.receiptFormed;
+  $('paymentReceiptSent').checked=!!payment?.receiptSent;
+  $('paymentReceiptUrl').value=payment?.receiptUrl||'';
+  $('paymentPayerType').value=payment?.payerType||'person';
+  $('paymentTaxBonus').value=payment?.taxBonus===false?'no':'yes';
+  $('deletePaymentBtn').classList.toggle('hidden',!payment);
+  const openLink=$('paymentReceiptOpenLink');
+  const url=safeHttpUrl(payment?.receiptUrl||''); openLink.hidden=!url; openLink.href=url||'#';
+  updatePaymentReceiptControls();
+  renderPaymentLessonChoices(payment);
+  $('paymentModalBackdrop').hidden=false;
+}
+$('paymentStudent').addEventListener('change',()=>renderPaymentLessonChoices(getPayment($('paymentId').value)||null));
+$('paymentPayerType').addEventListener('change',updatePaymentPreview);
+$('paymentTaxBonus').addEventListener('change',updatePaymentPreview);
+$('paymentReceiptFormed').addEventListener('change',()=>{updatePaymentReceiptControls();updatePaymentPreview();});
+$('paymentReceiptUrl').addEventListener('input',()=>{
+  const url=safeHttpUrl($('paymentReceiptUrl').value.trim());
+  $('paymentReceiptOpenLink').hidden=!url; $('paymentReceiptOpenLink').href=url||'#';
+});
+$('paymentForm').addEventListener('submit',async(e)=>{
+  e.preventDefault();
+  const existingId=$('paymentId').value;
+  const id=existingId||uid('payment');
+  const existing=getPayment(id);
+  const lessonIds=paymentSelectedLessonIds();
+  if(!$('paymentStudent').value) return toast('Выбери ученика');
+  if(!lessonIds.length) return toast('Выбери хотя бы одно занятие');
+  const amount=paymentSelectedAmount();
+  const payment={
+    ...(existing||{}),id,
+    studentId:$('paymentStudent').value,
+    date:$('paymentDate').value,
+    lessonIds,
+    amount,
+    receiptFormed:$('paymentReceiptFormed').checked,
+    receiptSent:$('paymentReceiptFormed').checked && $('paymentReceiptSent').checked,
+    receiptUrl:$('paymentReceiptFormed').checked?safeHttpUrl($('paymentReceiptUrl').value.trim()):'',
+    payerType:$('paymentPayerType').value==='business'?'business':'person',
+    taxBonus:$('paymentTaxBonus').value!=='no',
+    createdAt:existing?.createdAt||new Date().toISOString()
+  };
+  const oldIds=new Set(Array.isArray(existing?.lessonIds)?existing.lessonIds:[]);
+  const newIds=new Set(lessonIds);
+  try{
+    const lessonUpdates=[];
+    oldIds.forEach(lessonId=>{
+      if(newIds.has(lessonId)) return;
+      const lesson=getLesson(lessonId);
+      if(lesson?.paymentId===id) lessonUpdates.push(persistLesson({...lesson,paymentId:'',paid:false}));
+    });
+    lessonIds.forEach(lessonId=>{
+      const lesson=getLesson(lessonId);
+      if(lesson) lessonUpdates.push(persistLesson({...lesson,paymentId:id,paid:true}));
+    });
+    await Promise.all([persistPayment(payment),...lessonUpdates]);
+    closeModal('payment');
+    toast(payment.receiptFormed?'Оплата и чек сохранены':'Оплата сохранена — чек пока не сформирован');
+  }catch(error){ console.error(error); toast('Не удалось сохранить оплату'); }
+});
+$('deletePaymentBtn').addEventListener('click',async()=>{
+  const id=$('paymentId').value; const payment=getPayment(id); if(!id||!payment) return;
+  if(!confirm('Удалить запись об оплате? Связанные занятия снова станут неоплаченными.')) return;
+  try{
+    const lessonUpdates=(payment.lessonIds||[]).map(lessonId=>{
+      const lesson=getLesson(lessonId);
+      return lesson?.paymentId===id?persistLesson({...lesson,paymentId:'',paid:false}):Promise.resolve();
+    });
+    await Promise.all([...lessonUpdates,deleteCachedDoc('payments',id)]);
+    closeModal('payment'); toast('Оплата удалена');
+  }catch(error){ console.error(error); toast('Не удалось удалить оплату'); }
+});
+
 function personalEventSort(a,b){
   if(!!a.allDay!==!!b.allDay) return a.allDay?-1:1;
   return (a.time||'99:99').localeCompare(b.time||'99:99') || String(a.name||'').localeCompare(String(b.name||''),'ru');
@@ -867,7 +1076,9 @@ function renderJournalTable(lessons){
     const topics=(l.topics||[]).length ? l.topics.map(t=>`<span class="topic-pill">${escapeHtml(t.name||'Без темы')} <span class="progress-badge">${t.progress?`${t.progress}/10`:'—'}</span></span>`).join('') : '<span class="muted-empty">—</span>';
     const hw=homeworkBadge(l.homework);
     const notes=notesBadge(l.notes);
-    const pay=l.cancelled?'<span class="status-badge bad">Отменено</span>':(l.paid?'<span class="status-badge good">✓ '+money(l.price)+'</span>':'<span class="status-badge wait">○ '+money(l.price)+'</span>');
+    const linkedPayment=l.paymentId?getPayment(l.paymentId):null;
+    const receipt=linkedPayment?(linkedPayment.receiptFormed?'<small class="receipt-inline formed">чек ✓</small>':'<small class="receipt-inline pending">чек не сформирован</small>'):'';
+    const pay=l.cancelled?'<span class="status-badge bad">Отменено</span>':(l.paid?'<span class="status-badge good">✓ '+money(l.price)+'</span>'+receipt:'<span class="status-badge wait">○ '+money(l.price)+'</span>');
     return `<tr data-open-lesson="${l.id}" style="cursor:pointer">
       <td data-label="Дата">${formatDateRu(l.date,false)}<br><small>${escapeHtml(l.time||'')}</small></td>
       <td data-label="Тема">${topics}</td>
@@ -1509,6 +1720,8 @@ function openLessonModal(id=null,date=null,studentId=null){
   $('lessonComment').value=l?.comment||'';
   $('lessonConducted').checked=!!l?.conducted;
   $('lessonPaid').checked=!!l?.paid;
+  $('lessonPaid').disabled=!!l?.paymentId;
+  $('lessonPaymentSyncNote').hidden=!l?.paymentId;
   $('lessonCancelled').checked=!!l?.cancelled;
   $('topicsEditor').innerHTML='';
   (l?.topics?.length?l.topics:[{name:'',progress:''}]).forEach(addTopicRow);
@@ -1576,9 +1789,9 @@ $('deleteLessonBtn').addEventListener('click',async()=>{
 });
 
 document.querySelectorAll('[data-close]').forEach(btn=>btn.addEventListener('click',()=>closeModal(btn.dataset.close)));
-[$('lessonModalBackdrop'),$('studentModalBackdrop'),$('studentTopicModalBackdrop'),$('materialModalBackdrop'),$('trainerModalBackdrop'),$('folderModalBackdrop'),$('taskModalBackdrop'),$('personalEventModalBackdrop'),$('personalCategoryModalBackdrop')].filter(Boolean).forEach(backdrop=>backdrop.addEventListener('click',(e)=>{if(e.target===backdrop) backdrop.hidden=true;}));
+[$('lessonModalBackdrop'),$('studentModalBackdrop'),$('studentTopicModalBackdrop'),$('materialModalBackdrop'),$('trainerModalBackdrop'),$('folderModalBackdrop'),$('taskModalBackdrop'),$('paymentModalBackdrop'),$('personalEventModalBackdrop'),$('personalCategoryModalBackdrop')].filter(Boolean).forEach(backdrop=>backdrop.addEventListener('click',(e)=>{if(e.target===backdrop) backdrop.hidden=true;}));
 function closeModal(type){
-  const ids={lesson:'lessonModalBackdrop',student:'studentModalBackdrop',studentTopic:'studentTopicModalBackdrop',material:'materialModalBackdrop',trainer:'trainerModalBackdrop',folder:'folderModalBackdrop',task:'taskModalBackdrop',personalEvent:'personalEventModalBackdrop',personalCategory:'personalCategoryModalBackdrop'};
+  const ids={lesson:'lessonModalBackdrop',student:'studentModalBackdrop',studentTopic:'studentTopicModalBackdrop',material:'materialModalBackdrop',trainer:'trainerModalBackdrop',folder:'folderModalBackdrop',task:'taskModalBackdrop',payment:'paymentModalBackdrop',personalEvent:'personalEventModalBackdrop',personalCategory:'personalCategoryModalBackdrop'};
   if(ids[type]) $(ids[type]).hidden=true;
 }
 

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#fbf8f5" />
   <title>MoleMix Учебное пространство</title>
   <link rel="icon" href="assets/logo.png" />
-  <link rel="stylesheet" href="styles.css?v=20260922-1" />
+  <link rel="stylesheet" href="styles.css?v=20261002-1" />
 </head>
 <body>
   <div class="ambient-lines" aria-hidden="true">
@@ -69,15 +69,19 @@
             <div class="calendar-mode-switch" role="group" aria-label="Вид календаря">
               <button type="button" class="calendar-mode-btn active" id="studyCalendarMode">Учебный</button>
               <button type="button" class="calendar-mode-btn" id="personalCalendarMode">Личный</button>
+              <button type="button" class="calendar-mode-btn" id="paymentsCalendarMode">Оплаты</button>
             </div>
             <div class="eyebrow" id="calendarEyebrow">Планер занятий</div>
             <h2 id="monthTitle">Сентябрь 2026</h2>
-            <p class="section-quote">Пусть время работает на тебя.</p>
+            <p class="section-quote" id="calendarQuote">Пусть время работает на тебя.</p>
           </div>
           <div class="calendar-right-controls">
             <div class="personal-calendar-actions" id="personalCalendarActions" hidden>
               <button class="soft-btn" id="managePersonalCategoriesBtn" type="button">Категории</button>
               <button class="primary-btn" id="addPersonalEventBtn" type="button">+ Событие</button>
+            </div>
+            <div class="payment-calendar-actions" id="paymentCalendarActions" hidden>
+              <button class="primary-btn payment-add-btn" id="addPaymentBtn" type="button">+ Оплата</button>
             </div>
             <div class="month-controls">
               <button class="icon-btn" id="prevMonth" aria-label="Предыдущий месяц">←</button>
@@ -102,6 +106,29 @@
             <span>Проведено</span>
             <strong id="conductedCount">0</strong>
             <small>занятий за месяц</small>
+          </article>
+        </div>
+
+        <div class="summary-grid payment-summary-grid" id="paymentSummaryGrid" hidden>
+          <article class="summary-card payment-total-card">
+            <span>Получено</span>
+            <strong id="paymentMonthTotal">0 ₽</strong>
+            <small>оплаты за выбранный месяц</small>
+          </article>
+          <article class="summary-card payment-formed-card">
+            <span>Чеки</span>
+            <strong id="paymentReceiptCount">0 / 0</strong>
+            <small>сформировано</small>
+          </article>
+          <article class="summary-card payment-pending-card">
+            <span>Без чека</span>
+            <strong id="paymentPendingTotal">0 ₽</strong>
+            <small>оплата уже получена</small>
+          </article>
+          <article class="summary-card payment-tax-card">
+            <span>Налог ≈</span>
+            <strong id="paymentTaxTotal">0 ₽</strong>
+            <small>ориентировочно по ставкам записей</small>
           </article>
         </div>
 
@@ -353,6 +380,7 @@
             <span><strong>Отменено</strong><small>не считать как проведённое</small></span>
           </label>
         </div>
+        <div id="lessonPaymentSyncNote" class="payment-sync-note full" hidden>Оплата связана с записью в календаре «Оплаты». Статус оплаты меняется через эту запись.</div>
 
         <div class="modal-actions full">
           <button type="button" class="danger-btn hidden" id="deleteLessonBtn">Удалить</button>
@@ -619,6 +647,82 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="paymentModalBackdrop" hidden>
+    <div class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="paymentModalTitle">
+      <div class="modal-head">
+        <div>
+          <div class="eyebrow">Оплаты</div>
+          <h3 id="paymentModalTitle">Новая оплата</h3>
+        </div>
+        <button class="close-btn" data-close="payment" type="button">×</button>
+      </div>
+      <form id="paymentForm" class="form-grid">
+        <input type="hidden" id="paymentId" />
+        <label>
+          <span>Ученик</span>
+          <select id="paymentStudent" required></select>
+        </label>
+        <label>
+          <span>Дата оплаты</span>
+          <input id="paymentDate" type="date" required />
+        </label>
+
+        <div class="form-section full payment-lessons-section">
+          <div class="form-section-title">
+            <div>
+              <strong>Какие занятия входят в оплату</strong>
+              <small>Можно выбрать одно занятие или сразу несколько.</small>
+            </div>
+            <strong class="payment-modal-total" id="paymentModalTotal">0 ₽</strong>
+          </div>
+          <div id="paymentLessonChoices" class="payment-lesson-choices"></div>
+        </div>
+
+        <div class="status-row full payment-status-row">
+          <label class="toggle-card payment-formed-toggle">
+            <input type="checkbox" id="paymentReceiptFormed" />
+            <span class="toggle-dot"></span>
+            <span><strong>Чек сформирован</strong><small>карточка станет оранжевой</small></span>
+          </label>
+          <label class="toggle-card">
+            <input type="checkbox" id="paymentReceiptSent" />
+            <span class="toggle-dot"></span>
+            <span><strong>Чек отправлен</strong><small>родителю / ученику</small></span>
+          </label>
+        </div>
+
+        <label class="full">
+          <span>Ссылка на чек <small class="field-hint">необязательно</small></span>
+          <input id="paymentReceiptUrl" type="url" inputmode="url" placeholder="https://…" />
+        </label>
+        <a id="paymentReceiptOpenLink" class="soft-link-button full" href="#" target="_blank" rel="noopener" hidden>Открыть чек ↗</a>
+
+        <label>
+          <span>Кто оплатил</span>
+          <select id="paymentPayerType">
+            <option value="person">Физическое лицо</option>
+            <option value="business">ИП / организация</option>
+          </select>
+        </label>
+        <label class="payment-bonus-label">
+          <span>Налоговый бонус</span>
+          <select id="paymentTaxBonus">
+            <option value="yes">Учитывать бонус</option>
+            <option value="no">Без бонуса</option>
+          </select>
+        </label>
+        <div class="payment-tax-preview full" id="paymentTaxPreview">Примерный налог: 0 ₽</div>
+
+        <div class="modal-actions full">
+          <button type="button" class="danger-btn hidden" id="deletePaymentBtn">Удалить</button>
+          <div class="spacer"></div>
+          <button type="button" class="ghost-btn" data-close="payment">Отмена</button>
+          <button type="submit" class="primary-btn payment-save-btn">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="modal-backdrop" id="personalEventModalBackdrop" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="personalEventModalTitle">
       <div class="modal-head">
@@ -711,6 +815,6 @@
   </div>
 
   <div id="toast" class="toast" aria-live="polite"></div>
-  <script type="module" src="app.js?v=20260922-4"></script>
+  <script type="module" src="app.js?v=20261002-1"></script>
 </body>
 </html>
