@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#fbf8f5" />
   <title>MoleMix Учебное пространство</title>
   <link rel="icon" href="assets/logo.png" />
-  <link rel="stylesheet" href="styles.css?v=20261002-1" />
+  <link rel="stylesheet" href="styles.css?v=20261002-2" />
 </head>
 <body>
   <div class="ambient-lines" aria-hidden="true">
@@ -68,8 +68,8 @@
           <div>
             <div class="calendar-mode-switch" role="group" aria-label="Вид календаря">
               <button type="button" class="calendar-mode-btn active" id="studyCalendarMode">Учебный</button>
-              <button type="button" class="calendar-mode-btn" id="personalCalendarMode">Личный</button>
-              <button type="button" class="calendar-mode-btn" id="paymentsCalendarMode">Оплаты</button>
+              <button type="button" class="calendar-mode-btn" id="paymentsCalendarMode">Налог</button>
+              <button type="button" class="calendar-mode-btn" id="personalCalendarMode">Расходы</button>
             </div>
             <div class="eyebrow" id="calendarEyebrow">Планер занятий</div>
             <h2 id="monthTitle">Сентябрь 2026</h2>
@@ -103,32 +103,14 @@
             <small>неоплаченные занятия месяца</small>
           </article>
           <article class="summary-card">
-            <span>Проведено</span>
+            <span>Уроков проведено</span>
             <strong id="conductedCount">0</strong>
-            <small>занятий за месяц</small>
+            <small>за выбранный месяц</small>
           </article>
-        </div>
-
-        <div class="summary-grid payment-summary-grid" id="paymentSummaryGrid" hidden>
-          <article class="summary-card payment-total-card">
-            <span>Получено</span>
-            <strong id="paymentMonthTotal">0 ₽</strong>
-            <small>оплаты за выбранный месяц</small>
-          </article>
-          <article class="summary-card payment-formed-card">
-            <span>Чеки</span>
-            <strong id="paymentReceiptCount">0 / 0</strong>
-            <small>сформировано</small>
-          </article>
-          <article class="summary-card payment-pending-card">
-            <span>Без чека</span>
-            <strong id="paymentPendingTotal">0 ₽</strong>
-            <small>оплата уже получена</small>
-          </article>
-          <article class="summary-card payment-tax-card">
+          <article class="summary-card payment-tax-card" id="paymentTaxCard" hidden>
             <span>Налог ≈</span>
             <strong id="paymentTaxTotal">0 ₽</strong>
-            <small>ориентировочно по ставкам записей</small>
+            <small>ориентировочно по оплатам месяца</small>
           </article>
         </div>
 
@@ -815,6 +797,6 @@
   </div>
 
   <div id="toast" class="toast" aria-live="polite"></div>
-  <script type="module" src="app.js?v=20261002-1"></script>
+  <script type="module" src="app.js?v=20261002-2"></script>
 </body>
 </html>

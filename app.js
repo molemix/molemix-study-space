@@ -1,4 +1,4 @@
-// MoleMix build 2026-10-02.1 — optimized calendars + payments/receipts sync
+// MoleMix build 2026-10-02.2 — tax calendar UI + receipt-count colors
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import {
   getAuth,
@@ -314,9 +314,6 @@ function showCalendarLoading(){
   $('paidTotal').textContent='—';
   $('unpaidTotal').textContent='—';
   $('conductedCount').textContent='—';
-  if($('paymentMonthTotal')) $('paymentMonthTotal').textContent='—';
-  if($('paymentReceiptCount')) $('paymentReceiptCount').textContent='—';
-  if($('paymentPendingTotal')) $('paymentPendingTotal').textContent='—';
   if($('paymentTaxTotal')) $('paymentTaxTotal').textContent='—';
   $('calendarGrid').innerHTML='<div class="data-placeholder">Загружаю данные календаря…</div>';
 }
@@ -568,18 +565,19 @@ function renderCalendar(){
   $('studyCalendarMode').classList.toggle('active',study);
   $('personalCalendarMode').classList.toggle('active',personal);
   $('paymentsCalendarMode').classList.toggle('active',payments);
-  $('calendarEyebrow').textContent=personal?'Личный календарь':(payments?'Календарь оплат':'Планер занятий');
-  $('calendarQuote').textContent=personal?'Пусть в расписании остаётся место и для себя.':(payments?'Порядок в доходах — спокойствие в налогах.':'Пусть время работает на тебя.');
-  $('studySummaryGrid').hidden=!study;
-  $('paymentSummaryGrid').hidden=!payments;
+  $('calendarEyebrow').textContent=personal?'Календарь расходов':(payments?'Налог и чеки':'Планер занятий');
+  $('calendarQuote').textContent=personal?'Пусть расходы будут понятными, а планы — лёгкими.':(payments?'Порядок в доходах — спокойствие в налогах.':'Пусть время работает на тебя.');
+  $('studySummaryGrid').hidden=personal;
+  $('studySummaryGrid').classList.toggle('tax-summary-mode',payments);
+  $('paymentTaxCard').hidden=!payments;
   $('personalExpenses').hidden=!personal;
   $('personalCalendarActions').hidden=!personal;
   $('paymentCalendarActions').hidden=!payments;
 
   const key = monthKey(currentDate);
-  if(personal) renderPersonalExpenses(key,title);
-  else if(payments) renderPaymentSummary(key);
-  else{
+  if(personal){
+    renderPersonalExpenses(key,title);
+  }else{
     const monthLessons = state.lessons.filter(l=>l.date?.startsWith(key));
     const earned = monthLessons.filter(l=>l.paid && !l.cancelled).reduce((s,l)=>s+Number(l.price||0),0);
     const future = monthLessons.filter(l=>!l.paid && !l.cancelled).reduce((s,l)=>s+Number(l.price||0),0);
@@ -587,6 +585,7 @@ function renderCalendar(){
     $('paidTotal').textContent = money(earned);
     $('unpaidTotal').textContent = money(future);
     $('conductedCount').textContent = conducted;
+    if(payments) renderPaymentSummary(key);
   }
 
   const grid = $('calendarGrid');
@@ -663,22 +662,16 @@ function paymentTax(payment){
 }
 function renderPaymentSummary(key){
   const rows=state.payments.filter(p=>p.date?.startsWith(key));
-  const total=rows.reduce((sum,p)=>sum+Number(p.amount||0),0);
-  const formed=rows.filter(p=>p.receiptFormed);
-  const pending=rows.filter(p=>!p.receiptFormed);
-  const pendingTotal=pending.reduce((sum,p)=>sum+Number(p.amount||0),0);
   const tax=rows.reduce((sum,p)=>sum+paymentTax(p),0);
-  $('paymentMonthTotal').textContent=money(total);
-  $('paymentReceiptCount').textContent=`${formed.length} / ${rows.length}`;
-  $('paymentPendingTotal').textContent=money(pendingTotal);
   $('paymentTaxTotal').textContent=money(Math.round(tax));
 }
 function renderPaymentChip(payment){
   const student=getStudent(payment.studentId);
   const btn=document.createElement('button');
   btn.type='button';
-  btn.className=`payment-chip ${payment.receiptFormed?'formed':'pending'}`;
   const count=Array.isArray(payment.lessonIds)?payment.lessonIds.length:0;
+  const receiptClass=!payment.receiptFormed?'pending':(count===1?'formed receipt-one':(count===2?'formed receipt-two':'formed receipt-many'));
+  btn.className=`payment-chip ${receiptClass}`;
   const countLabel=count===1?'1 занятие':(count>=2&&count<=4?`${count} занятия`:`${count} занятий`);
   btn.innerHTML=`<strong class="payment-chip-amount">${money(payment.amount)}</strong><span class="payment-chip-meta">${escapeHtml(student?.name||'Ученик')} · ${countLabel}</span>`;
   btn.title=[payment.receiptFormed?'Чек сформирован':'Чек не сформирован',payment.receiptSent?'отправлен':'не отправлен'].join(' · ');
